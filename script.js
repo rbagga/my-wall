@@ -325,12 +325,12 @@ class WallApp {
     toggleWall() {
         if (this.currentWall === 'rishu') {
             this.currentWall = 'friend';
-            this.dom.wallTitle.textContent = "friend's wall";
+            this.dom.wallTitle.textContent = "friends' wall";
             this.dom.toggleWallButton.textContent = "rishu's wall";
         } else {
             this.currentWall = 'rishu';
             this.dom.wallTitle.textContent = "rishu's wall";
-            this.dom.toggleWallButton.textContent = "friend's wall";
+            this.dom.toggleWallButton.textContent = "friends' wall";
         }
         this.loadEntries();
     }
