@@ -1,10 +1,15 @@
 const { createClient } = require('@supabase/supabase-js');
+const OpenAI = require('openai');
 
 // Use service role key for server-side operations (bypasses RLS)
 const supabase = createClient(
   process.env.SUPABASE_URL,
   process.env.SUPABASE_SERVICE_ROLE_KEY
 );
+
+const openai = new OpenAI({
+  apiKey: process.env.OPENAI_API_KEY
+});
 
 module.exports = async function handler(req, res) {
   // Enable CORS
@@ -40,6 +45,19 @@ module.exports = async function handler(req, res) {
 
       if (!name || !text) {
         return res.status(400).json({ error: 'Name and text are required' });
+      }
+
+      // Moderate content using OpenAI
+      const moderation = await openai.moderations.create({
+        input: `${name}: ${text}`
+      });
+
+      const result = moderation.results[0];
+
+      if (result.flagged) {
+        return res.status(400).json({
+          error: 'Your message contains inappropriate content and cannot be posted.'
+        });
       }
 
       const { data, error } = await supabase
