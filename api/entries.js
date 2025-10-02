@@ -1,4 +1,4 @@
-import { createClient } from '@supabase/supabase-js';
+const { createClient } = require('@supabase/supabase-js');
 
 // Use service role key for server-side operations (bypasses RLS)
 const supabase = createClient(
@@ -6,7 +6,7 @@ const supabase = createClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY
 );
 
-export default async function handler(req, res) {
+module.exports = async function handler(req, res) {
   // Enable CORS
   res.setHeader('Access-Control-Allow-Credentials', true);
   res.setHeader('Access-Control-Allow-Origin', '*');
@@ -24,7 +24,7 @@ export default async function handler(req, res) {
   if (req.method === 'GET') {
     try {
       const { data, error } = await supabase
-        .from('entries')
+        .from('wall_entries')
         .select('*')
         .order('timestamp', { ascending: false });
 
@@ -44,7 +44,7 @@ export default async function handler(req, res) {
       }
 
       const { data, error } = await supabase
-        .from('entries')
+        .from('wall_entries')
         .insert([
           {
             text: text,
