@@ -44,9 +44,15 @@ body.dark-mode .header {
     margin: 0;
 }
 
-.add-button-header {
-    position: absolute !important;
-    left: 16px !important;
+.header-left {
+    position: absolute;
+    left: 16px;
+    display: flex;
+    gap: 8px;
+}
+
+.add-button-header,
+.toggle-wall-button {
     padding: 6px 12px;
     background: transparent;
     border: 1px solid #ccc;
@@ -58,17 +64,20 @@ body.dark-mode .header {
     color: #333;
 }
 
-.add-button-header:hover {
+.add-button-header:hover,
+.toggle-wall-button:hover {
     border-color: #999;
 }
 
-body.dark-mode .add-button-header {
+body.dark-mode .add-button-header,
+body.dark-mode .toggle-wall-button {
     background: transparent;
     border: 1px solid #555;
     color: #e0e0e0;
 }
 
-body.dark-mode .add-button-header:hover {
+body.dark-mode .add-button-header:hover,
+body.dark-mode .toggle-wall-button:hover {
     border-color: #777;
 }
 
@@ -116,6 +125,19 @@ body.dark-mode .entry:hover {
     font-variant-numeric: tabular-nums;
     white-space: nowrap;
     margin-right: 10px;
+}
+
+.entry-name {
+    flex-shrink: 0;
+    color: #666;
+    font-size: 11px;
+    font-weight: 500;
+    white-space: nowrap;
+    margin-right: 10px;
+}
+
+body.dark-mode .entry-name {
+    color: #aaa;
 }
 
 .entry-text {

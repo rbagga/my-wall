@@ -6,6 +6,7 @@ class WallApp {
         this.entries = [];
         this.isAuthenticated = false;
         this.dom = {};
+        this.currentWall = 'rishu'; // 'rishu' or 'friend'
 
         this.init();
     }
@@ -18,6 +19,8 @@ class WallApp {
         this.dom.addButton = document.getElementById('addButton');
         this.dom.closeBtn = document.getElementById('closeBtn');
         this.dom.darkModeToggle = document.getElementById('darkModeToggle');
+        this.dom.toggleWallButton = document.getElementById('toggleWallButton');
+        this.dom.wallTitle = document.getElementById('wallTitle');
 
         // Load data
         this.loadAuthState();
@@ -44,7 +47,8 @@ class WallApp {
 
     async loadEntries() {
         try {
-            const response = await fetch('/api/entries');
+            const endpoint = this.currentWall === 'rishu' ? '/api/entries' : '/api/friend-entries';
+            const response = await fetch(endpoint);
             const result = await response.json();
 
             if (!response.ok) throw new Error(result.error);
@@ -98,21 +102,20 @@ class WallApp {
 
         // Dark mode toggle
         this.dom.darkModeToggle.addEventListener('change', () => this.toggleDarkMode());
+
+        // Toggle wall button
+        this.dom.toggleWallButton.addEventListener('click', () => this.toggleWall());
     }
 
     handleAddButtonClick() {
-        console.log('=== ADD BUTTON CLICKED ===');
-        console.log('isAuthenticated:', this.isAuthenticated);
-        console.log('Modal element:', this.dom.modal);
-        console.log('Modal classList:', this.dom.modal.classList);
-        console.log('Button element:', this.dom.addButton);
-
-        if (this.isAuthenticated) {
-            console.log('Showing entry form');
-            this.showEntryForm();
+        if (this.currentWall === 'friend') {
+            this.showFriendEntryForm();
         } else {
-            console.log('Showing password form');
-            this.showPasswordForm();
+            if (this.isAuthenticated) {
+                this.showEntryForm();
+            } else {
+                this.showPasswordForm();
+            }
         }
     }
 
@@ -122,6 +125,7 @@ class WallApp {
         this.entries.forEach((entry) => {
             const entryText = entry.text;
             const timestamp = entry.timestamp;
+            const name = entry.name;
 
             const entryDiv = document.createElement('div');
             entryDiv.className = 'entry';
@@ -130,11 +134,20 @@ class WallApp {
             timestampSpan.className = 'entry-timestamp';
             timestampSpan.textContent = timestamp ? this.formatTimestamp(timestamp) : '';
 
+            if (name && this.currentWall === 'friend') {
+                const nameSpan = document.createElement('span');
+                nameSpan.className = 'entry-name';
+                nameSpan.textContent = name;
+                entryDiv.appendChild(timestampSpan);
+                entryDiv.appendChild(nameSpan);
+            } else {
+                entryDiv.appendChild(timestampSpan);
+            }
+
             const textSpan = document.createElement('span');
             textSpan.className = 'entry-text';
             textSpan.textContent = entryText;
 
-            entryDiv.appendChild(timestampSpan);
             entryDiv.appendChild(textSpan);
 
             entryDiv.addEventListener('click', () => this.showEntry(entryText));
@@ -218,6 +231,29 @@ class WallApp {
         }, 100);
     }
 
+    showFriendEntryForm() {
+        const form = document.createElement('form');
+        form.className = 'entry-form';
+        form.innerHTML = `
+            <h3>New Entry</h3>
+            <input type="text" id="entryName" placeholder="Your name" required>
+            <textarea id="entryText" placeholder="Write your entry..." required></textarea>
+            <button type="submit">Add to Wall</button>
+        `;
+
+        this.dom.modalBody.innerHTML = '';
+        this.dom.modalBody.appendChild(form);
+
+        form.addEventListener('submit', (e) => this.handleFriendEntrySubmit(e));
+
+        this.openModal();
+
+        // Focus name input
+        setTimeout(() => {
+            document.getElementById('entryName')?.focus();
+        }, 100);
+    }
+
     async handleEntrySubmit(e) {
         e.preventDefault();
 
@@ -241,6 +277,62 @@ class WallApp {
                 }
             }
         }
+    }
+
+    async handleFriendEntrySubmit(e) {
+        e.preventDefault();
+
+        const nameInput = document.getElementById('entryName');
+        const textarea = document.getElementById('entryText');
+        const name = nameInput.value.trim();
+        const text = textarea.value.trim();
+
+        if (text && name) {
+            try {
+                await this.saveFriendEntry(text, name);
+                await this.loadEntries();
+                this.closeModal();
+            } catch (error) {
+                alert('Error saving entry. Please try again.');
+            }
+        }
+    }
+
+    async saveFriendEntry(text, name) {
+        try {
+            const response = await fetch('/api/friend-entries', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    text: text,
+                    name: name
+                })
+            });
+
+            const result = await response.json();
+
+            if (!response.ok) throw new Error(result.error);
+
+            return result.data;
+        } catch (error) {
+            console.error('Error saving friend entry:', error);
+            throw error;
+        }
+    }
+
+    toggleWall() {
+        if (this.currentWall === 'rishu') {
+            this.currentWall = 'friend';
+            this.dom.wallTitle.textContent = "friend's wall";
+            this.dom.toggleWallButton.textContent = "rishu's wall";
+        } else {
+            this.currentWall = 'rishu';
+            this.dom.wallTitle.textContent = "rishu's wall";
+            this.dom.toggleWallButton.textContent = "friend's wall";
+        }
+        this.loadEntries();
     }
 
     openModal() {
