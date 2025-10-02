@@ -31,6 +31,7 @@ body.dark-mode {
     align-items: center;
     position: relative;
     transition: background 0.3s, border-color 0.3s;
+    min-height: 48px;
 }
 
 body.dark-mode .header {
@@ -48,7 +49,37 @@ body.dark-mode .header {
     position: absolute;
     left: 16px;
     display: flex;
+    flex-direction: row;
     gap: 8px;
+    flex-wrap: wrap;
+    max-width: calc(100% - 100px);
+}
+
+@media (max-width: 600px) {
+    .header {
+        flex-direction: column;
+        padding: 8px 16px;
+        gap: 8px;
+        min-height: auto;
+    }
+
+    .header-left {
+        position: static;
+        width: 100%;
+        max-width: 100%;
+        order: 2;
+        justify-content: center;
+    }
+
+    .header-title {
+        order: 1;
+    }
+
+    .dark-mode-toggle {
+        position: absolute;
+        top: 8px;
+        right: 16px;
+    }
 }
 
 .add-button-header,
