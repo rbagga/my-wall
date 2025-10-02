@@ -59,7 +59,24 @@ module.exports = async function handler(req, res) {
 
           const result = moderation.results[0];
 
-          if (result.flagged) {
+          // Stricter thresholds - flag if any score is above these values
+          const strictThresholds = {
+            sexual: 0.01,           // Very strict on sexual content
+            harassment: 0.15,       // Catches "fuck this shit" type language
+            hate: 0.01,
+            violence: 0.01,
+            'self-harm': 0.01
+          };
+
+          // Check if flagged or if scores exceed our stricter thresholds
+          const isInappropriate = result.flagged ||
+            result.category_scores.sexual > strictThresholds.sexual ||
+            result.category_scores.harassment > strictThresholds.harassment ||
+            result.category_scores.hate > strictThresholds.hate ||
+            result.category_scores.violence > strictThresholds.violence ||
+            result.category_scores['self-harm'] > strictThresholds['self-harm'];
+
+          if (isInappropriate) {
             return res.status(400).json({
               error: 'Your message contains inappropriate content and cannot be posted.'
             });
