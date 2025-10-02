@@ -47,17 +47,24 @@ module.exports = async function handler(req, res) {
         return res.status(400).json({ error: 'Name and text are required' });
       }
 
-      // Moderate content using OpenAI
-      const moderation = await openai.moderations.create({
-        input: `${name}: ${text}`
-      });
+      // Moderate content using OpenAI (if API key is provided)
+      if (process.env.OPENAI_API_KEY) {
+        try {
+          const moderation = await openai.moderations.create({
+            input: `${name}: ${text}`
+          });
 
-      const result = moderation.results[0];
+          const result = moderation.results[0];
 
-      if (result.flagged) {
-        return res.status(400).json({
-          error: 'Your message contains inappropriate content and cannot be posted.'
-        });
+          if (result.flagged) {
+            return res.status(400).json({
+              error: 'Your message contains inappropriate content and cannot be posted.'
+            });
+          }
+        } catch (moderationError) {
+          console.error('Moderation error:', moderationError);
+          // Continue without moderation if there's an error
+        }
       }
 
       const { data, error } = await supabase
