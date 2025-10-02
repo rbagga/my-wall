@@ -1,5 +1,4 @@
 const { createClient } = require('@supabase/supabase-js');
-const OpenAI = require('openai');
 
 // Use service role key for server-side operations (bypasses RLS)
 const supabase = createClient(
@@ -7,9 +6,13 @@ const supabase = createClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY
 );
 
-const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY
-});
+let openai = null;
+if (process.env.OPENAI_API_KEY) {
+  const OpenAI = require('openai');
+  openai = new OpenAI({
+    apiKey: process.env.OPENAI_API_KEY
+  });
+}
 
 module.exports = async function handler(req, res) {
   // Enable CORS
