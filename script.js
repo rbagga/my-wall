@@ -33,13 +33,13 @@ class WallApp {
     }
 
     loadAuthState() {
-        // Load authentication state
-        const savedAuth = localStorage.getItem(CONFIG.STORAGE_KEYS.AUTH);
-        this.isAuthenticated = savedAuth === 'true';
+        // Don't persist authentication - always require password
+        this.isAuthenticated = false;
+        this.tempPassword = null;
     }
 
     saveAuthState() {
-        localStorage.setItem(CONFIG.STORAGE_KEYS.AUTH, this.isAuthenticated ? 'true' : 'false');
+        // Don't save auth state - always require password
     }
 
     async loadEntries() {
@@ -190,12 +190,9 @@ class WallApp {
         e.preventDefault();
 
         const input = document.getElementById('passwordInput');
-        const errorDiv = document.getElementById('passwordError');
 
         // Store password temporarily for entry submission
         this.tempPassword = input.value;
-        this.isAuthenticated = true;
-        this.saveAuthState();
         this.showEntryForm();
     }
 
@@ -231,13 +228,12 @@ class WallApp {
             try {
                 await this.saveEntry(text, this.tempPassword);
                 await this.loadEntries();
+                this.tempPassword = null;
                 this.closeModal();
             } catch (error) {
                 if (error.message === 'Invalid password') {
-                    // Password was wrong, clear auth and show password form again
-                    this.isAuthenticated = false;
+                    // Password was wrong
                     this.tempPassword = null;
-                    this.saveAuthState();
                     alert('Invalid password. Please try again.');
                     this.closeModal();
                 } else {
