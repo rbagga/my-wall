@@ -1,12 +1,5 @@
 // App state and configuration
-const CONFIG = {
-    PASSWORD: 'mypassword',
-    STORAGE_KEYS: {
-        ENTRIES: 'wallEntries',
-        AUTH: 'isAuthenticated',
-        DARK_MODE: 'darkMode'
-    }
-};
+// CONFIG is loaded from config.js
 
 class WallApp {
     constructor() {
@@ -26,35 +19,67 @@ class WallApp {
         this.dom.closeBtn = document.getElementById('closeBtn');
         this.dom.darkModeToggle = document.getElementById('darkModeToggle');
 
-        // Load data from localStorage
-        this.loadData();
+        // Load data
+        this.loadAuthState();
 
         // Set up event listeners
         this.setupEventListeners();
 
-        // Initial render
-        this.renderEntries();
+        // Load entries from database
+        this.loadEntries();
 
         // Apply dark mode if enabled
         this.applyDarkMode();
     }
 
-    loadData() {
-        // Load entries
-        const savedEntries = localStorage.getItem(CONFIG.STORAGE_KEYS.ENTRIES);
-        this.entries = savedEntries ? JSON.parse(savedEntries) : [];
-
+    loadAuthState() {
         // Load authentication state
         const savedAuth = localStorage.getItem(CONFIG.STORAGE_KEYS.AUTH);
         this.isAuthenticated = savedAuth === 'true';
     }
 
-    saveEntries() {
-        localStorage.setItem(CONFIG.STORAGE_KEYS.ENTRIES, JSON.stringify(this.entries));
-    }
-
     saveAuthState() {
         localStorage.setItem(CONFIG.STORAGE_KEYS.AUTH, this.isAuthenticated ? 'true' : 'false');
+    }
+
+    async loadEntries() {
+        try {
+            const response = await fetch('/api/entries');
+            const result = await response.json();
+
+            if (!response.ok) throw new Error(result.error);
+
+            this.entries = result.data || [];
+            this.renderEntries();
+        } catch (error) {
+            console.error('Error loading entries:', error);
+            this.entries = [];
+            this.renderEntries();
+        }
+    }
+
+    async saveEntry(text, password) {
+        try {
+            const response = await fetch('/api/entries', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    text: text,
+                    password: password
+                })
+            });
+
+            const result = await response.json();
+
+            if (!response.ok) throw new Error(result.error);
+
+            return result.data;
+        } catch (error) {
+            console.error('Error saving entry:', error);
+            throw error;
+        }
     }
 
     setupEventListeners() {
@@ -95,11 +120,8 @@ class WallApp {
         this.dom.wall.innerHTML = '';
 
         this.entries.forEach((entry) => {
-            console.log('Entry:', entry);
-            // Handle both old string entries and new object entries
-            const entryText = typeof entry === 'string' ? entry : entry.text;
-            const timestamp = typeof entry === 'string' ? null : entry.timestamp;
-            console.log('Timestamp:', timestamp);
+            const entryText = entry.text;
+            const timestamp = entry.timestamp;
 
             const entryDiv = document.createElement('div');
             entryDiv.className = 'entry';
@@ -170,13 +192,11 @@ class WallApp {
         const input = document.getElementById('passwordInput');
         const errorDiv = document.getElementById('passwordError');
 
-        if (input.value === CONFIG.PASSWORD) {
-            this.isAuthenticated = true;
-            this.saveAuthState();
-            this.showEntryForm();
-        } else {
-            errorDiv.textContent = 'Incorrect password';
-        }
+        // Store password temporarily for entry submission
+        this.tempPassword = input.value;
+        this.isAuthenticated = true;
+        this.saveAuthState();
+        this.showEntryForm();
     }
 
     showEntryForm() {
@@ -201,21 +221,29 @@ class WallApp {
         }, 100);
     }
 
-    handleEntrySubmit(e) {
+    async handleEntrySubmit(e) {
         e.preventDefault();
 
         const textarea = document.getElementById('entryText');
         const text = textarea.value.trim();
 
         if (text) {
-            const entry = {
-                text: text,
-                timestamp: new Date().toISOString()
-            };
-            this.entries.unshift(entry);
-            this.saveEntries();
-            this.renderEntries();
-            this.closeModal();
+            try {
+                await this.saveEntry(text, this.tempPassword);
+                await this.loadEntries();
+                this.closeModal();
+            } catch (error) {
+                if (error.message === 'Invalid password') {
+                    // Password was wrong, clear auth and show password form again
+                    this.isAuthenticated = false;
+                    this.tempPassword = null;
+                    this.saveAuthState();
+                    alert('Invalid password. Please try again.');
+                    this.closeModal();
+                } else {
+                    alert('Error saving entry. Please try again.');
+                }
+            }
         }
     }
 
