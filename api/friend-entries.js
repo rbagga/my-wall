@@ -53,11 +53,10 @@ module.exports = async function handler(req, res) {
       // Moderate content using OpenAI (if API key is provided)
       if (process.env.OPENAI_API_KEY) {
         try {
+          // Check both name and text separately
           const moderation = await openai.moderations.create({
-            input: `${name}: ${text}`
+            input: [name, text]
           });
-
-          const result = moderation.results[0];
 
           // Stricter thresholds - flag if any score is above these values
           const strictThresholds = {
@@ -68,18 +67,20 @@ module.exports = async function handler(req, res) {
             'self-harm': 0.01
           };
 
-          // Check if flagged or if scores exceed our stricter thresholds
-          const isInappropriate = result.flagged ||
-            result.category_scores.sexual > strictThresholds.sexual ||
-            result.category_scores.harassment > strictThresholds.harassment ||
-            result.category_scores.hate > strictThresholds.hate ||
-            result.category_scores.violence > strictThresholds.violence ||
-            result.category_scores['self-harm'] > strictThresholds['self-harm'];
+          // Check both name and text results
+          for (const result of moderation.results) {
+            const isInappropriate = result.flagged ||
+              result.category_scores.sexual > strictThresholds.sexual ||
+              result.category_scores.harassment > strictThresholds.harassment ||
+              result.category_scores.hate > strictThresholds.hate ||
+              result.category_scores.violence > strictThresholds.violence ||
+              result.category_scores['self-harm'] > strictThresholds['self-harm'];
 
-          if (isInappropriate) {
-            return res.status(400).json({
-              error: 'Your message contains inappropriate content and cannot be posted.'
-            });
+            if (isInappropriate) {
+              return res.status(400).json({
+                error: 'Your message contains inappropriate content and cannot be posted.'
+              });
+            }
           }
         } catch (moderationError) {
           console.error('Moderation error:', moderationError);
