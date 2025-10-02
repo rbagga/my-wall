@@ -63,7 +63,7 @@ module.exports = async function handler(req, res) {
             sexual: 0.01,           // Very strict on sexual content
             harassment: 0.15,       // Catches "fuck this shit" type language
             hate: 0.01,
-            violence: 0.01,
+            violence: 0.05,         // Slightly more lenient to allow references like "goggins"
             'self-harm': 0.01
           };
 
