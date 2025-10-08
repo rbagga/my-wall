@@ -7,6 +7,7 @@ class WallApp {
         this.isAuthenticated = false;
         this.dom = {};
         this.currentWall = 'rishu'; // 'rishu' or 'friend'
+        this.entriesCache = { rishu: null, friend: null };
 
         this.init();
     }
@@ -46,19 +47,33 @@ class WallApp {
     }
 
     async loadEntries() {
+        const wallKey = this.currentWall;
+
+        // If we have cached entries, render them immediately to avoid blank state
+        const cached = this.entriesCache[wallKey];
+        if (Array.isArray(cached)) {
+            this.entries = cached;
+            this.renderEntries();
+        }
+
         try {
-            const endpoint = this.currentWall === 'rishu' ? '/api/entries' : '/api/friend-entries';
+            const endpoint = wallKey === 'rishu' ? '/api/entries' : '/api/friend-entries';
             const response = await fetch(endpoint);
             const result = await response.json();
 
             if (!response.ok) throw new Error(result.error);
 
-            this.entries = result.data || [];
+            const fresh = result.data || [];
+            this.entriesCache[wallKey] = fresh;
+            this.entries = fresh;
             this.renderEntries();
         } catch (error) {
             console.error('Error loading entries:', error);
-            this.entries = [];
-            this.renderEntries();
+            // Only show empty if we have no cache to fall back to
+            if (!Array.isArray(this.entriesCache[wallKey])) {
+                this.entries = [];
+                this.renderEntries();
+            }
         }
     }
 
@@ -413,6 +428,12 @@ class WallApp {
             this.dom.wallTitle.textContent = "rishu's wall";
             this.dom.toggleWallButton.textContent = "friends' wall";
         }
+
+        // Render cached entries instantly, then refresh in background
+        const cached = this.entriesCache[this.currentWall] || [];
+        this.entries = cached;
+        this.renderEntries();
+
         this.loadEntries();
     }
 
