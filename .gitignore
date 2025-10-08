@@ -2,3 +2,6 @@
 .env.local
 node_modules
 .vercel
+*.swp
+*.swo
+.DS_Store

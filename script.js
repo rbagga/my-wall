@@ -202,11 +202,47 @@ class WallApp {
     handlePasswordSubmit(e) {
         e.preventDefault();
 
-        const input = document.getElementById('passwordInput');
+        const form = e.target;
+        if (form.classList.contains('is-submitting')) return;
 
-        // Store password temporarily for entry submission
-        this.tempPassword = input.value;
-        this.showEntryForm();
+        const input = document.getElementById('passwordInput');
+        const errorEl = document.getElementById('passwordError');
+        const submitBtn = form.querySelector('button[type="submit"]');
+
+        const pwd = (input.value || '').trim();
+        errorEl.textContent = '';
+
+        if (!pwd) {
+            input.value = '';
+            input.focus();
+            return;
+        }
+
+        form.classList.add('is-submitting');
+        if (submitBtn) submitBtn.disabled = true;
+
+        // Verify password before showing entry form
+        fetch('/api/verify-password', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ password: pwd })
+        })
+        .then(async (resp) => {
+            const data = await resp.json().catch(() => ({}));
+            if (!resp.ok) throw new Error(data.error || 'Invalid password');
+            // Success: store temp and proceed to entry form
+            this.tempPassword = pwd;
+            this.showEntryForm();
+        })
+        .catch((err) => {
+            errorEl.textContent = 'Invalid password. Please try again.';
+            input.value = '';
+            input.focus();
+        })
+        .finally(() => {
+            if (submitBtn) submitBtn.disabled = false;
+            form.classList.remove('is-submitting');
+        });
     }
 
     showEntryForm() {
@@ -257,44 +293,89 @@ class WallApp {
     async handleEntrySubmit(e) {
         e.preventDefault();
 
-        const textarea = document.getElementById('entryText');
+        const form = e.target;
+        if (form.classList.contains('is-submitting')) return;
+
+        const textarea = form.querySelector('#entryText');
+        const submitBtn = form.querySelector('button[type="submit"]');
         const text = textarea.value.trim();
 
-        if (text) {
-            try {
-                await this.saveEntry(text, this.tempPassword);
-                await this.loadEntries();
+        // Prevent empty/whitespace-only submissions
+        if (!text) {
+            textarea.value = '';
+            textarea.focus();
+            return;
+        }
+
+        // Immediately clear and prevent double submit
+        textarea.value = '';
+        if (submitBtn) submitBtn.disabled = true;
+        form.classList.add('is-submitting');
+
+        try {
+            await this.saveEntry(text, this.tempPassword);
+            await this.loadEntries();
+            this.tempPassword = null;
+            this.closeModal();
+        } catch (error) {
+            if (error.message === 'Invalid password') {
+                // Password was wrong
                 this.tempPassword = null;
+                alert('Invalid password. Please try again.');
                 this.closeModal();
-            } catch (error) {
-                if (error.message === 'Invalid password') {
-                    // Password was wrong
-                    this.tempPassword = null;
-                    alert('Invalid password. Please try again.');
-                    this.closeModal();
-                } else {
-                    alert('Error saving entry. Please try again.');
-                }
+            } else {
+                alert('Error saving entry. Please try again.');
             }
+        } finally {
+            if (submitBtn) submitBtn.disabled = false;
+            form.classList.remove('is-submitting');
         }
     }
 
     async handleFriendEntrySubmit(e) {
         e.preventDefault();
 
-        const nameInput = document.getElementById('entryName');
-        const textarea = document.getElementById('entryText');
+        const form = e.target;
+        if (form.classList.contains('is-submitting')) return;
+
+        const nameInput = form.querySelector('#entryName');
+        const textarea = form.querySelector('#entryText');
+        const submitBtn = form.querySelector('button[type="submit"]');
+
         const name = nameInput.value.trim();
         const text = textarea.value.trim();
 
-        if (text && name) {
-            try {
-                await this.saveFriendEntry(text, name);
-                await this.loadEntries();
-                this.closeModal();
-            } catch (error) {
+        // Prevent empty/whitespace-only submissions
+        if (!name || !text) {
+            if (!name) nameInput.focus();
+            else textarea.focus();
+            return;
+        }
+
+        // Immediately clear and prevent double submit
+        nameInput.value = '';
+        textarea.value = '';
+        if (submitBtn) submitBtn.disabled = true;
+        form.classList.add('is-submitting');
+
+        try {
+            await this.saveFriendEntry(text, name);
+            await this.loadEntries();
+            this.closeModal();
+        } catch (error) {
+            // Provide clearer message for moderation blocks
+            const msg = String(error && error.message || '');
+            if (/inappropriate/i.test(msg)) {
+                alert('Your entry was blocked due to inappropriate language (in the message or name). Please edit and try again.');
+                // Restore inputs so user can edit
+                nameInput.value = name;
+                textarea.value = text;
+            } else {
                 alert('Error saving entry. Please try again.');
             }
+        } finally {
+            if (submitBtn) submitBtn.disabled = false;
+            form.classList.remove('is-submitting');
         }
     }
 
