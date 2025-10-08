@@ -29,8 +29,9 @@ class WallApp {
         // Set up event listeners
         this.setupEventListeners();
 
-        // Load entries from database
-        this.loadEntries();
+        // Setup routing and render based on current hash
+        this.setupRouting();
+        this.applyWallFromHash();
 
         // Apply dark mode if enabled
         this.applyDarkMode();
@@ -120,6 +121,31 @@ class WallApp {
 
         // Toggle wall button
         this.dom.toggleWallButton.addEventListener('click', () => this.toggleWall());
+    }
+
+    setupRouting() {
+        window.addEventListener('hashchange', () => this.applyWallFromHash());
+    }
+
+    applyWallFromHash() {
+        const hash = (location.hash || '').toLowerCase();
+        const nextWall = hash.includes('friend') ? 'friend' : 'rishu';
+
+        this.currentWall = nextWall;
+
+        if (this.currentWall === 'friend') {
+            this.dom.wallTitle.textContent = "friends' wall";
+            this.dom.toggleWallButton.textContent = "rishu's wall";
+        } else {
+            this.dom.wallTitle.textContent = "rishu's wall";
+            this.dom.toggleWallButton.textContent = "friends' wall";
+        }
+
+        // Render cached entries instantly, then refresh
+        const cached = this.entriesCache[this.currentWall] || [];
+        this.entries = cached;
+        this.renderEntries();
+        this.loadEntries();
     }
 
     handleAddButtonClick() {
@@ -419,22 +445,12 @@ class WallApp {
     }
 
     toggleWall() {
+        // Navigate via hash so refresh preserves selection
         if (this.currentWall === 'rishu') {
-            this.currentWall = 'friend';
-            this.dom.wallTitle.textContent = "friends' wall";
-            this.dom.toggleWallButton.textContent = "rishu's wall";
+            location.hash = '#friends';
         } else {
-            this.currentWall = 'rishu';
-            this.dom.wallTitle.textContent = "rishu's wall";
-            this.dom.toggleWallButton.textContent = "friends' wall";
+            location.hash = '#rishu';
         }
-
-        // Render cached entries instantly, then refresh in background
-        const cached = this.entriesCache[this.currentWall] || [];
-        this.entries = cached;
-        this.renderEntries();
-
-        this.loadEntries();
     }
 
     openModal() {
