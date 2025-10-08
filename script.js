@@ -37,6 +37,10 @@ class WallApp {
         this.applyDarkMode();
     }
 
+    showLoading() {
+        this.dom.wall.innerHTML = '<div class="loading"><div class="spinner"></div></div>';
+    }
+
     loadAuthState() {
         // Don't persist authentication - always require password
         this.isAuthenticated = false;
@@ -50,11 +54,13 @@ class WallApp {
     async loadEntries() {
         const wallKey = this.currentWall;
 
-        // If we have cached entries, render them immediately to avoid blank state
+        // If we have cached entries, render them immediately; otherwise show loader
         const cached = this.entriesCache[wallKey];
         if (Array.isArray(cached)) {
             this.entries = cached;
             this.renderEntries();
+        } else {
+            this.showLoading();
         }
 
         try {
@@ -70,11 +76,7 @@ class WallApp {
             this.renderEntries();
         } catch (error) {
             console.error('Error loading entries:', error);
-            // Only show empty if we have no cache to fall back to
-            if (!Array.isArray(this.entriesCache[wallKey])) {
-                this.entries = [];
-                this.renderEntries();
-            }
+            // If no cache, leave loader in place on error; otherwise entries remain
         }
     }
 
@@ -141,10 +143,14 @@ class WallApp {
             this.dom.toggleWallButton.textContent = "friends' wall";
         }
 
-        // Render cached entries instantly, then refresh
-        const cached = this.entriesCache[this.currentWall] || [];
-        this.entries = cached;
-        this.renderEntries();
+        // Render cached entries instantly if present, otherwise show loader
+        const cached = this.entriesCache[this.currentWall];
+        if (Array.isArray(cached)) {
+            this.entries = cached;
+            this.renderEntries();
+        } else {
+            this.showLoading();
+        }
         this.loadEntries();
     }
 
