@@ -8,6 +8,8 @@ class WallApp {
         this.dom = {};
         this.currentWall = 'rishu'; // 'rishu' or 'friend'
         this.entriesCache = { rishu: null, friend: null };
+        this._dragImg = null; // legacy HTML5 DnD ghost suppressor (no longer used)
+        this._mouseDrag = { active: false, el: null };
 
         this.init();
     }
@@ -22,6 +24,7 @@ class WallApp {
         this.dom.darkModeToggle = document.getElementById('darkModeToggle');
         this.dom.toggleWallButton = document.getElementById('toggleWallButton');
         this.dom.wallTitle = document.getElementById('wallTitle');
+        // no organize button in UI
 
         // Load data
         this.loadAuthState();
@@ -35,6 +38,9 @@ class WallApp {
 
         // Apply dark mode if enabled
         this.applyDarkMode();
+
+        // Prepare transparent drag image (kept for compatibility but not used now)
+        this._dragImg = this.createTransparentDragImage();
     }
 
     showLoading() {
@@ -42,13 +48,19 @@ class WallApp {
     }
 
     loadAuthState() {
-        // Don't persist authentication - always require password
-        this.isAuthenticated = false;
-        this.tempPassword = null;
+        const auth = localStorage.getItem(CONFIG.STORAGE_KEYS.AUTH);
+        const pwd = localStorage.getItem(CONFIG.STORAGE_KEYS.PASSWORD);
+        this.isAuthenticated = auth === 'true' && !!pwd;
+        this.tempPassword = this.isAuthenticated ? pwd : null;
     }
 
     saveAuthState() {
-        // Don't save auth state - always require password
+        localStorage.setItem(CONFIG.STORAGE_KEYS.AUTH, this.isAuthenticated ? 'true' : 'false');
+        if (this.isAuthenticated && this.tempPassword) {
+            localStorage.setItem(CONFIG.STORAGE_KEYS.PASSWORD, this.tempPassword);
+        } else {
+            localStorage.removeItem(CONFIG.STORAGE_KEYS.PASSWORD);
+        }
     }
 
     async loadEntries() {
@@ -123,6 +135,10 @@ class WallApp {
 
         // Toggle wall button
         this.dom.toggleWallButton.addEventListener('click', () => this.toggleWall());
+
+        // Drag-and-drop listeners (auth-gated in handlers)
+        this.dom.wall.addEventListener('dragover', (e) => this.onDragOver(e));
+        this.dom.wall.addEventListener('drop', (e) => this.onDrop(e));
     }
 
     setupRouting() {
@@ -168,14 +184,36 @@ class WallApp {
 
     renderEntries() {
         this.dom.wall.innerHTML = '';
+        // Sort: pinned first by pin_order asc, then others by timestamp desc
+        const entries = [...this.entries];
+        const hasPinInfo = entries.some(e => typeof e.is_pinned !== 'undefined' || typeof e.pin_order !== 'undefined');
+        let sorted = entries;
+        if (hasPinInfo) {
+            sorted = entries.sort((a, b) => {
+                const ap = a.is_pinned ? 1 : 0;
+                const bp = b.is_pinned ? 1 : 0;
+                if (ap !== bp) return bp - ap; // pinned first
+                if (ap === 1 && bp === 1) {
+                    const ao = (a.pin_order ?? Number.MAX_SAFE_INTEGER);
+                    const bo = (b.pin_order ?? Number.MAX_SAFE_INTEGER);
+                    if (ao !== bo) return ao - bo;
+                }
+                // fallback by timestamp desc
+                const at = a.timestamp || '';
+                const bt = b.timestamp || '';
+                return (bt > at) ? 1 : (bt < at ? -1 : 0);
+            });
+        }
 
-        this.entries.forEach((entry) => {
+        sorted.forEach((entry) => {
             const entryText = entry.text;
             const timestamp = entry.timestamp;
             const name = entry.name;
 
             const entryDiv = document.createElement('div');
             entryDiv.className = 'entry';
+            entryDiv.dataset.id = entry.id;
+            if (entry.is_pinned) entryDiv.classList.add('pinned');
 
             const timestampSpan = document.createElement('span');
             timestampSpan.className = 'entry-timestamp';
@@ -197,9 +235,43 @@ class WallApp {
 
             entryDiv.appendChild(textSpan);
 
+            // Entry click to open modal
             entryDiv.addEventListener('click', () => this.showEntry(entryText));
+
+            // Pin/unpin + drag controls on rishu wall
+            if (this.currentWall === 'rishu') {
+                const pinBtn = document.createElement('button');
+                pinBtn.className = 'pin-btn';
+                pinBtn.type = 'button';
+                pinBtn.title = entry.is_pinned ? 'Unpin' : 'Pin';
+                pinBtn.setAttribute('aria-label', entry.is_pinned ? 'Unpin entry' : 'Pin entry');
+                pinBtn.innerHTML = `
+                    <svg viewBox="0 0 24 24" aria-hidden="true">
+                      <path d="M8 3 H16 L14 8 V11 L17 14 V15 H7 V14 L10 11 V8 Z"/>
+                      <path d="M12 15 V21"/>
+                    </svg>
+                `;
+                // Prevent row-drag from starting when interacting with the pin button
+                pinBtn.addEventListener('mousedown', (ev) => { ev.stopPropagation(); });
+                pinBtn.addEventListener('touchstart', (ev) => { ev.stopPropagation(); }, { passive: true });
+                pinBtn.addEventListener('click', (ev) => {
+                    ev.stopPropagation();
+                    this.togglePin(entry);
+                });
+                entryDiv.appendChild(pinBtn);
+
+                // Enable custom mouse-based dragging only for pinned entries
+                if (entry.is_pinned) {
+                    entryDiv.classList.add('draggable');
+                    entryDiv.addEventListener('mousedown', (e) => this.onMouseDownDrag(e, entryDiv));
+                    // touch support (basic)
+                    entryDiv.addEventListener('touchstart', (e) => this.onTouchStartDrag(e, entryDiv), { passive: false });
+                }
+            }
             this.dom.wall.appendChild(entryDiv);
         });
+
+        // dragover/drop listeners added once in setup
     }
 
     formatTimestamp(isoString) {
@@ -277,8 +349,10 @@ class WallApp {
         .then(async (resp) => {
             const data = await resp.json().catch(() => ({}));
             if (!resp.ok) throw new Error(data.error || 'Invalid password');
-            // Success: store temp and proceed to entry form
+            // Success: store temp, persist auth, and proceed to entry form
             this.tempPassword = pwd;
+            this.isAuthenticated = true;
+            this.saveAuthState();
             this.showEntryForm();
         })
         .catch((err) => {
@@ -362,7 +436,6 @@ class WallApp {
         try {
             await this.saveEntry(text, this.tempPassword);
             await this.loadEntries();
-            this.tempPassword = null;
             this.closeModal();
         } catch (error) {
             if (error.message === 'Invalid password') {
@@ -457,6 +530,324 @@ class WallApp {
         } else {
             location.hash = '#rishu';
         }
+    }
+
+    // organize mode removed; auth-gated inline actions
+
+    promptForPassword() {
+        return new Promise((resolve, reject) => {
+            const form = document.createElement('form');
+            form.className = 'password-form';
+            form.innerHTML = `
+                <h3>Enter Password</h3>
+                <input type="password" id="passwordInput" placeholder="Password" required autocomplete="current-password">
+                <div id="passwordError" class="error"></div>
+                <button type="submit">Submit</button>
+            `;
+            this.dom.modalBody.innerHTML = '';
+            this.dom.modalBody.appendChild(form);
+            this.openModal();
+
+            setTimeout(() => {
+                document.getElementById('passwordInput')?.focus();
+            }, 50);
+
+            const onSubmit = async (e) => {
+                e.preventDefault();
+                const input = document.getElementById('passwordInput');
+                const errorEl = document.getElementById('passwordError');
+                const pwd = (input.value || '').trim();
+                errorEl.textContent = '';
+                if (!pwd) return;
+                try {
+                    const resp = await fetch('/api/verify-password', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ password: pwd })
+                    });
+                    const data = await resp.json().catch(() => ({}));
+                    if (!resp.ok) throw new Error(data.error || 'Invalid password');
+                    this.tempPassword = pwd;
+                    this.isAuthenticated = true;
+                    this.saveAuthState();
+                    this.closeModal();
+                    resolve();
+                } catch (err) {
+                    errorEl.textContent = 'Invalid password. Please try again.';
+                    input.value = '';
+                    input.focus();
+                }
+            };
+            form.addEventListener('submit', onSubmit, { once: true });
+        });
+    }
+
+    async togglePin(entry) {
+        if (!this.isAuthenticated) {
+            try {
+                await this.promptForPassword();
+            } catch (_) {
+                return; // cancelled
+            }
+        }
+        const willPin = !entry.is_pinned;
+
+        // Optimistic local update
+        const prev = { is_pinned: entry.is_pinned, pin_order: entry.pin_order };
+        if (willPin) {
+            const maxOrder = Math.max(-1, ...this.entries.filter(e => e.is_pinned).map(e => e.pin_order ?? -1));
+            entry.is_pinned = true;
+            entry.pin_order = maxOrder + 1;
+        } else {
+            entry.is_pinned = false;
+            entry.pin_order = null;
+        }
+        // Update caches and rerender immediately
+        if (this.currentWall === 'rishu') {
+            this.entriesCache.rishu = this.entries;
+        }
+        this.renderEntries();
+
+        try {
+            await this.pinEntry(entry.id, willPin);
+        } catch (e) {
+            // Revert on failure
+            entry.is_pinned = prev.is_pinned;
+            entry.pin_order = prev.pin_order;
+            if (this.currentWall === 'rishu') this.entriesCache.rishu = this.entries;
+            this.renderEntries();
+            alert('Failed to update pin.');
+        }
+    }
+
+    async pinEntry(id, pin) {
+        const response = await fetch('/api/pin-entry', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ id, pin, password: this.tempPassword })
+        });
+        const result = await response.json();
+        if (!response.ok) throw new Error(result.error || 'Error');
+        return result.ok;
+    }
+
+    async savePinnedOrder(idList) {
+        const response = await fetch('/api/reorder-pins', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ orderedIds: idList, password: this.tempPassword })
+        });
+        const result = await response.json();
+        if (!response.ok) throw new Error(result.error || 'Error');
+        return result.ok;
+    }
+
+    // HTML5 DnD handlers are no longer used
+    onDragStart(e) {}
+
+    onDragEnd(e) {}
+
+    onDragOver(e) {}
+
+    onDrop(e) {
+        e.preventDefault();
+        // Order persisted in onDragEnd
+    }
+
+    getDragAfterElement(y) {
+        const draggableElements = [...this.dom.wall.querySelectorAll('.entry.pinned:not(.dragging)')];
+        return draggableElements.reduce((closest, child) => {
+            const box = child.getBoundingClientRect();
+            const offset = y - box.top - box.height / 2;
+            if (offset < 0 && offset > closest.offset) {
+                return { offset, element: child };
+            } else {
+                return closest;
+            }
+        }, { offset: Number.NEGATIVE_INFINITY }).element;
+    }
+
+    createTransparentDragImage() {
+        try {
+            const c = document.createElement('canvas');
+            c.width = 1; c.height = 1;
+            const ctx = c.getContext('2d');
+            ctx.clearRect(0, 0, 1, 1);
+            return c;
+        } catch (_) {
+            return null;
+        }
+    }
+
+    // Custom mouse/touch drag for pinned rows
+    onMouseDownDrag(e, el) {
+        if (this.currentWall !== 'rishu') return;
+        // left button only
+        if (e.button !== undefined && e.button !== 0) return;
+        // Ignore drags starting on the pin button
+        if (e.target && e.target.closest && e.target.closest('.pin-btn')) return;
+        e.preventDefault();
+        const start = async () => {
+            if (!this.isAuthenticated) {
+                try { await this.promptForPassword(); } catch (_) { return; }
+            }
+            this.startMouseDrag(el, e.clientY);
+            document.addEventListener('mousemove', this.onMouseMoveDrag);
+            document.addEventListener('mouseup', this.onMouseUpDrag, { once: true });
+        };
+        start();
+    }
+
+    onTouchStartDrag(e, el) {
+        if (this.currentWall !== 'rishu') return;
+        if (e.target && e.target.closest && e.target.closest('.pin-btn')) return;
+        if (e.touches && e.touches.length > 0) {
+            e.preventDefault();
+            const y = e.touches[0].clientY;
+            const start = async () => {
+                if (!this.isAuthenticated) {
+                    try { await this.promptForPassword(); } catch (_) { return; }
+                }
+                this.startMouseDrag(el, y);
+                document.addEventListener('touchmove', this.onTouchMoveDrag, { passive: false });
+                document.addEventListener('touchend', this.onTouchEndDrag, { once: true });
+            };
+            start();
+        }
+    }
+
+    startMouseDrag(el, startY) {
+        const elRect = el.getBoundingClientRect();
+
+        // Compute pinned bounds (top of first pinned to bottom of last pinned)
+        const pinnedEls = Array.from(this.dom.wall.querySelectorAll('.entry.pinned'));
+        if (pinnedEls.length === 0) return;
+        const firstRect = pinnedEls[0].getBoundingClientRect();
+        const lastRect = pinnedEls[pinnedEls.length - 1].getBoundingClientRect();
+
+        this._mouseDrag = {
+            active: true,
+            el,
+            offsetY: startY - elRect.top,
+            placeholder: null,
+            bounds: { minY: firstRect.top, maxY: lastRect.bottom, height: elRect.height }
+        };
+
+        // Insert placeholder in original position
+        const placeholder = document.createElement('div');
+        placeholder.className = 'entry pinned placeholder';
+        placeholder.style.height = `${elRect.height}px`;
+        this._mouseDrag.placeholder = placeholder;
+        el.parentNode.insertBefore(placeholder, el);
+
+        // Lift the element: fixed positioning to follow cursor
+        el.classList.add('dragging-abs');
+        el.style.width = `${elRect.width}px`;
+        el.style.left = `${elRect.left}px`;
+        el.style.top = `${elRect.top}px`;
+
+        document.body.classList.add('no-select');
+    }
+
+    onMouseMoveDrag = (e) => {
+        if (!this._mouseDrag.active) return;
+        e.preventDefault();
+        this.reorderWhileDragging(e.clientY);
+    }
+
+    onMouseUpDrag = (e) => {
+        if (!this._mouseDrag.active) return;
+        this.finishMouseDrag();
+    }
+
+    onTouchMoveDrag = (e) => {
+        if (!this._mouseDrag.active) return;
+        if (e.touches && e.touches.length > 0) {
+            e.preventDefault();
+            this.reorderWhileDragging(e.touches[0].clientY);
+        }
+    }
+
+    onTouchEndDrag = (e) => {
+        if (!this._mouseDrag.active) return;
+        this.finishMouseDrag();
+    }
+
+    reorderWhileDragging(y) {
+        const drag = this._mouseDrag;
+        const el = drag.el;
+
+        // Clamp cursor within pinned bounds
+        const minTop = drag.bounds.minY;
+        const maxTop = drag.bounds.maxY - drag.bounds.height;
+        const unclampedTop = y - (drag.offsetY || 0);
+        const clampedTop = Math.max(minTop, Math.min(maxTop, unclampedTop));
+
+        // Follow cursor within bounds
+        el.style.top = `${clampedTop}px`;
+
+        // Use clamped cursor position for placeholder placement
+        const clampedCursorY = clampedTop + (drag.offsetY || 0);
+        const afterEl = this.getPinnedAfterElement(clampedCursorY);
+        const firstUnpinned = this.dom.wall.querySelector('.entry:not(.pinned)');
+        const placeholder = drag.placeholder;
+        if (afterEl == null) {
+            if (firstUnpinned) this.dom.wall.insertBefore(placeholder, firstUnpinned);
+            else this.dom.wall.appendChild(placeholder);
+        } else {
+            this.dom.wall.insertBefore(placeholder, afterEl);
+        }
+    }
+
+    finishMouseDrag() {
+        const drag = this._mouseDrag;
+        const el = drag.el;
+        const placeholder = drag.placeholder;
+        if (el) {
+            el.classList.remove('dragging-abs');
+            el.style.position = '';
+            el.style.top = '';
+            el.style.left = '';
+            el.style.width = '';
+        }
+        // Place element where placeholder is
+        if (placeholder && placeholder.parentNode) {
+            placeholder.parentNode.insertBefore(el, placeholder);
+            placeholder.remove();
+        }
+
+        this._mouseDrag = { active: false, el: null, placeholder: null };
+        document.body.classList.remove('no-select');
+
+        // Remove move listeners
+        document.removeEventListener('mousemove', this.onMouseMoveDrag);
+        document.removeEventListener('touchmove', this.onTouchMoveDrag);
+
+        // Persist new order and update local state
+        const els = Array.from(this.dom.wall.querySelectorAll('.entry.pinned'));
+        const orderedIds = els.map(el => el.dataset.id);
+        const map = new Map(orderedIds.map((id, idx) => [id, idx]));
+        this.entries.forEach(en => {
+            if (en.is_pinned && map.has(String(en.id))) {
+                en.pin_order = map.get(String(en.id));
+            }
+        });
+        if (this.currentWall === 'rishu') this.entriesCache.rishu = this.entries;
+        this.savePinnedOrder(orderedIds).catch(() => alert('Failed to save order'));
+    }
+
+    getPinnedAfterElement(y) {
+        const selector = '.entry.pinned:not(.dragging-abs):not(.placeholder)';
+        const draggableElements = [...this.dom.wall.querySelectorAll(selector)];
+        return draggableElements.reduce((closest, child) => {
+            const box = child.getBoundingClientRect();
+            const offset = y - box.top - box.height / 2;
+            if (offset < 0 && offset > closest.offset) {
+                return { offset, element: child };
+            } else {
+                return closest;
+            }
+        }, { offset: Number.NEGATIVE_INFINITY }).element;
     }
 
     openModal() {

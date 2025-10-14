@@ -1,8 +1,16 @@
 {
   "name": "my-wall",
   "version": "1.0.0",
+  "scripts": {
+    "supabase": "supabase",
+    "db:push": "supabase db push",
+    "db:new": "supabase migration new"
+  },
   "dependencies": {
     "@supabase/supabase-js": "^2.39.0",
     "openai": "^6.1.0"
+  },
+  "devDependencies": {
+    "supabase": "^2.51.0"
   }
 }

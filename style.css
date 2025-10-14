@@ -149,6 +149,92 @@ body.dark-mode .entry:hover {
     background: #333;
 }
 
+/* Pinned state + manage mode controls */
+.entry.pinned {
+    border-left: 3px solid #888;
+}
+
+body.dark-mode .entry.pinned {
+    border-left-color: #aaa;
+}
+
+.pin-btn {
+    border: none;
+    border-radius: 6px;
+    padding: 4px;
+    cursor: pointer;
+    color: #555;
+    background: transparent;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.pin-btn svg {
+    width: 16px;
+    height: 16px;
+    display: block;
+}
+
+.pin-btn svg path {
+    fill: transparent;
+    stroke: currentColor;
+    stroke-width: 1.5;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+    vector-effect: non-scaling-stroke;
+    transition: fill 0.15s ease-in-out;
+}
+
+.pin-btn:hover svg path {
+    fill: currentColor;
+}
+
+/* Persist filled icon when pinned */
+.entry.pinned .pin-btn svg path {
+    fill: currentColor;
+}
+
+/* Drag cursors and feel */
+.entry.draggable {
+    cursor: grab;
+}
+.entry.dragging {
+    cursor: grabbing;
+}
+
+.no-select {
+    -webkit-user-select: none;
+    -moz-user-select: none;
+    -ms-user-select: none;
+    user-select: none;
+}
+
+/* Absolute-dragging visual for moving the real row */
+.entry.dragging-abs {
+    position: fixed;
+    z-index: 1000;
+    pointer-events: none;
+    /* optional: subtle lift */
+    box-shadow: 0 4px 10px rgba(0,0,0,0.15);
+}
+
+.entry.placeholder {
+    visibility: hidden; /* reserve space without showing content */
+}
+
+body.dark-mode .pin-btn {
+    color: #ddd;
+}
+
+.dragging {
+    opacity: 0.6;
+}
+
+.drag-over {
+    outline: 2px dashed #999;
+}
+
 .entry-timestamp {
     flex-shrink: 0;
     color: #999;

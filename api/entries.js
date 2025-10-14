@@ -26,6 +26,8 @@ module.exports = async function handler(req, res) {
       const { data, error } = await supabase
         .from('wall_entries')
         .select('*')
+        .order('is_pinned', { ascending: false })
+        .order('pin_order', { ascending: true, nullsFirst: false })
         .order('timestamp', { ascending: false });
 
       if (error) throw error;
