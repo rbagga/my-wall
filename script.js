@@ -694,45 +694,37 @@ class WallApp {
         if (e.button !== undefined && e.button !== 0) return;
         // Ignore drags starting on the pin button
         if (e.target && e.target.closest && e.target.closest('.pin-btn')) return;
+        // If not authenticated, do not allow drag and do not prompt;
+        // allow the normal click to proceed.
+        if (!this.isAuthenticated) return;
         // Do not preventDefault here; wait to see if it becomes a drag
-        const prepare = async () => {
-            if (!this.isAuthenticated) {
-                try { await this.promptForPassword(); } catch (_) { return; }
-            }
-            this._dragIntent = {
-                type: 'mouse',
-                el,
-                startX: e.clientX,
-                startY: e.clientY,
-                started: false
-            };
-            document.addEventListener('mousemove', this.onMouseMoveMaybeStart, { passive: true });
-            document.addEventListener('mouseup', this.onMouseUpMaybeStart, { once: true });
+        this._dragIntent = {
+            type: 'mouse',
+            el,
+            startX: e.clientX,
+            startY: e.clientY,
+            started: false
         };
-        prepare();
+        document.addEventListener('mousemove', this.onMouseMoveMaybeStart, { passive: true });
+        document.addEventListener('mouseup', this.onMouseUpMaybeStart, { once: true });
     }
 
     onTouchStartDrag(e, el) {
         if (this.currentWall !== 'rishu') return;
         if (e.target && e.target.closest && e.target.closest('.pin-btn')) return;
+        if (!this.isAuthenticated) return; // do not allow drag or prompt; treat as normal tap
         if (e.touches && e.touches.length > 0) {
             // Do not preventDefault yet; wait to see if it becomes a drag
             const t = e.touches[0];
-            const prepare = async () => {
-                if (!this.isAuthenticated) {
-                    try { await this.promptForPassword(); } catch (_) { return; }
-                }
-                this._dragIntent = {
-                    type: 'touch',
-                    el,
-                    startX: t.clientX,
-                    startY: t.clientY,
-                    started: false
-                };
-                document.addEventListener('touchmove', this.onTouchMoveMaybeStart, { passive: true });
-                document.addEventListener('touchend', this.onTouchEndMaybeStart, { once: true });
+            this._dragIntent = {
+                type: 'touch',
+                el,
+                startX: t.clientX,
+                startY: t.clientY,
+                started: false
             };
-            prepare();
+            document.addEventListener('touchmove', this.onTouchMoveMaybeStart, { passive: true });
+            document.addEventListener('touchend', this.onTouchEndMaybeStart, { once: true });
         }
     }
 
