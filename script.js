@@ -372,6 +372,19 @@ class WallApp {
         if (this.isAuthenticated && this.currentWall === 'rishu' && isObj) {
             const actions = document.createElement('div');
             actions.className = 'modal-actions';
+
+            const left = document.createElement('div');
+            const right = document.createElement('div');
+            actions.appendChild(left);
+            actions.appendChild(right);
+
+            // Delete button with confirm flow
+            const delBtn = document.createElement('button');
+            delBtn.type = 'button';
+            delBtn.className = 'danger';
+            delBtn.textContent = 'Delete';
+            left.appendChild(delBtn);
+
             const editBtn = document.createElement('button');
             editBtn.type = 'button';
             editBtn.className = 'action-edit-btn';
@@ -382,8 +395,45 @@ class WallApp {
                 </svg>
                 Edit`;
             editBtn.addEventListener('click', () => this.showEditForm(entry));
-            actions.appendChild(editBtn);
+            right.appendChild(editBtn);
+
+            // Delete confirm UI (hidden until clicked)
+            const confirmWrap = document.createElement('div');
+            confirmWrap.className = 'delete-confirm';
+            confirmWrap.style.display = 'none';
+            confirmWrap.innerHTML = `
+                <small>Type "delete me" to confirm</small>
+                <div class="confirm-row">
+                  <input type="text" class="confirm-input" placeholder="delete me" />
+                  <button type="button" class="danger confirm-btn" disabled>Confirm</button>
+                </div>
+            `;
+
+            delBtn.addEventListener('click', () => {
+                confirmWrap.style.display = confirmWrap.style.display === 'none' ? 'flex' : 'none';
+            });
+
+            const input = confirmWrap.querySelector('.confirm-input');
+            const confirmBtn = confirmWrap.querySelector('.confirm-btn');
+            input.addEventListener('input', () => {
+                confirmBtn.disabled = !(input.value.trim().toLowerCase() === 'delete me');
+            });
+            confirmBtn.addEventListener('click', async () => {
+                confirmBtn.disabled = true;
+                try {
+                    await this.removeEntry(entry.id);
+                    this.entriesCache.rishu = null;
+                    this.entriesCache.drafts = null;
+                    await this.loadEntries();
+                    this.closeModal();
+                } catch (e) {
+                    alert('Failed to delete entry.');
+                    confirmBtn.disabled = false;
+                }
+            });
+
             container.appendChild(actions);
+            container.appendChild(confirmWrap);
         }
 
         this.dom.modalBody.innerHTML = '';
@@ -548,6 +598,7 @@ class WallApp {
             <div style="display:flex; gap:8px;">
                 <button type="button" id="publishBtn">Publish</button>
                 <button type="button" id="saveDraftBtn">Save Draft</button>
+                <button type="button" id="deleteBtn" class="danger" style="margin-left:auto;">Delete</button>
             </div>
         `;
 
@@ -582,6 +633,41 @@ class WallApp {
         publishBtn.addEventListener('click', () => doUpdate('public'));
         saveDraftBtn.addEventListener('click', () => doUpdate('draft'));
 
+        // Delete flow with confirm text
+        const deleteBtn = form.querySelector('#deleteBtn');
+        const confirmWrap = document.createElement('div');
+        confirmWrap.className = 'delete-confirm';
+        confirmWrap.style.display = 'none';
+        confirmWrap.innerHTML = `
+            <small>Type "delete me" to confirm deletion</small>
+            <div class="confirm-row">
+              <input type="text" class="confirm-input" placeholder="delete me" />
+              <button type="button" class="danger confirm-btn" disabled>Confirm</button>
+            </div>
+        `;
+        form.appendChild(confirmWrap);
+        deleteBtn.addEventListener('click', () => {
+            confirmWrap.style.display = confirmWrap.style.display === 'none' ? 'flex' : 'none';
+        });
+        const cInput = confirmWrap.querySelector('.confirm-input');
+        const cBtn = confirmWrap.querySelector('.confirm-btn');
+        cInput.addEventListener('input', () => {
+            cBtn.disabled = !(cInput.value.trim().toLowerCase() === 'delete me');
+        });
+        cBtn.addEventListener('click', async () => {
+            cBtn.disabled = true;
+            try {
+                await this.removeEntry(entry.id);
+                this.entriesCache.rishu = null;
+                this.entriesCache.drafts = null;
+                await this.loadEntries();
+                this.closeModal();
+            } catch (e) {
+                alert('Failed to delete entry.');
+                cBtn.disabled = false;
+            }
+        });
+
         this.openModal();
         setTimeout(() => textarea?.focus(), 100);
     }
@@ -595,6 +681,17 @@ class WallApp {
         const result = await response.json().catch(() => ({}));
         if (!response.ok) throw new Error(result.error || 'Error');
         return result.data;
+    }
+
+    async removeEntry(id) {
+        const response = await fetch('/api/delete-entry', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ id, password: this.tempPassword })
+        });
+        const result = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(result.error || 'Error');
+        return result.ok;
     }
 
     async handleEntrySubmit(e) {

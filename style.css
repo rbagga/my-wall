@@ -371,7 +371,7 @@ body.dark-mode .modal-content {
 
 .modal-actions {
     display: flex;
-    justify-content: flex-end;
+    justify-content: space-between;
     margin-top: 14px;
 }
 
@@ -388,6 +388,27 @@ body.dark-mode .modal-content {
 
 .modal-actions button:hover {
     background: #555;
+}
+
+.modal-actions .danger {
+    background: #8b1c1c;
+}
+.modal-actions .danger:hover {
+    background: #a22626;
+}
+
+.delete-confirm {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    margin-top: 10px;
+}
+.delete-confirm small {
+    color: #999;
+}
+.delete-confirm .confirm-row {
+    display: flex;
+    gap: 8px;
 }
 
 /* Keep modal edit icon outlined, not filled */
