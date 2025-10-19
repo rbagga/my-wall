@@ -23,14 +23,28 @@ module.exports = async function handler(req, res) {
 
   if (req.method === 'GET') {
     try {
-      const { data, error } = await supabase
+      // Try with visibility filter (new schema)
+      let query = supabase
         .from('wall_entries')
         .select('*')
+        .eq('visibility', 'public')
         .order('is_pinned', { ascending: false })
         .order('pin_order', { ascending: true, nullsFirst: false })
         .order('timestamp', { ascending: false });
 
-      if (error) throw error;
+      let { data, error } = await query;
+
+      if (error) {
+        // Fallback for old schema where column doesn't exist
+        const fallback = await supabase
+          .from('wall_entries')
+          .select('*')
+          .order('is_pinned', { ascending: false })
+          .order('pin_order', { ascending: true, nullsFirst: false })
+          .order('timestamp', { ascending: false });
+        if (fallback.error) throw fallback.error;
+        data = fallback.data;
+      }
 
       res.status(200).json({ data });
     } catch (error) {
@@ -38,24 +52,49 @@ module.exports = async function handler(req, res) {
     }
   } else if (req.method === 'POST') {
     try {
-      const { text, password } = req.body;
+      const { text, password, visibility } = req.body;
 
       // Verify password
       if (password !== process.env.WALL_PASSWORD) {
         return res.status(401).json({ error: 'Invalid password' });
       }
 
-      const { data, error } = await supabase
+      // sanitize visibility; default to 'public'
+      const vis = visibility === 'draft' ? 'draft' : 'public';
+
+      const row = {
+        text: text,
+        timestamp: new Date().toISOString(),
+        visibility: vis
+      };
+
+      // Try insert with visibility (new schema)
+      let ins = await supabase
         .from('wall_entries')
-        .insert([
-          {
-            text: text,
-            timestamp: new Date().toISOString()
-          }
-        ])
+        .insert([row])
         .select();
 
-      if (error) throw error;
+      if (ins.error) {
+        // If column missing and it's a public publish, try without visibility for backward compat
+        if (vis === 'public') {
+          const fallback = await supabase
+            .from('wall_entries')
+            .insert([
+              {
+                text: text,
+                timestamp: new Date().toISOString()
+              }
+            ])
+            .select();
+          if (fallback.error) throw fallback.error;
+          ins = fallback;
+        } else {
+          // Can't save drafts until migration applied
+          throw new Error('Drafts require DB migration. Please run supabase db push.');
+        }
+      }
+
+      const data = ins.data;
 
       res.status(200).json({ data: data[0] });
     } catch (error) {

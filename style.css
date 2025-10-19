@@ -369,6 +369,36 @@ body.dark-mode .modal-content {
     word-wrap: break-word;
 }
 
+.modal-actions {
+    display: flex;
+    justify-content: flex-end;
+    margin-top: 14px;
+}
+
+.modal-actions button {
+    padding: 10px;
+    background: #333;
+    color: white;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 14px;
+    transition: background 0.2s;
+}
+
+.modal-actions button:hover {
+    background: #555;
+}
+
+/* Keep modal edit icon outlined, not filled */
+.modal-actions .action-edit-btn svg path {
+    fill: transparent;
+    stroke: currentColor;
+    stroke-width: 1.5;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+}
+
 .password-form, .entry-form {
     display: flex;
     flex-direction: column;
@@ -413,6 +443,7 @@ textarea {
     resize: vertical;
 }
 
+.entry-form button,
 button[type="submit"] {
     padding: 10px;
     background: #333;
@@ -424,6 +455,7 @@ button[type="submit"] {
     transition: background 0.2s;
 }
 
+.entry-form button:hover,
 button[type="submit"]:hover {
     background: #555;
 }

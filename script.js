@@ -6,8 +6,8 @@ class WallApp {
         this.entries = [];
         this.isAuthenticated = false;
         this.dom = {};
-        this.currentWall = 'rishu'; // 'rishu' or 'friend'
-        this.entriesCache = { rishu: null, friend: null };
+        this.currentWall = 'rishu'; // 'rishu', 'friend', or 'drafts'
+        this.entriesCache = { rishu: null, friend: null, drafts: null };
         this._dragImg = null; // legacy HTML5 DnD ghost suppressor (no longer used)
         this._mouseDrag = { active: false, el: null };
         this._dragIntent = null; // pending drag start info (click-vs-drag threshold)
@@ -26,10 +26,12 @@ class WallApp {
         this.dom.darkModeToggle = document.getElementById('darkModeToggle');
         this.dom.toggleWallButton = document.getElementById('toggleWallButton');
         this.dom.wallTitle = document.getElementById('wallTitle');
+        this.dom.draftsButton = document.getElementById('draftsButton');
         // no organize button in UI
 
         // Load data
         this.loadAuthState();
+        this.updateAuthUI();
 
         // Set up event listeners
         this.setupEventListeners();
@@ -56,6 +58,13 @@ class WallApp {
         this.tempPassword = this.isAuthenticated ? pwd : null;
     }
 
+    updateAuthUI() {
+        if (this.dom && this.dom.draftsButton) {
+            const onDrafts = this.currentWall === 'drafts';
+            this.dom.draftsButton.style.display = this.isAuthenticated && !onDrafts ? 'inline-block' : 'none';
+        }
+    }
+
     saveAuthState() {
         localStorage.setItem(CONFIG.STORAGE_KEYS.AUTH, this.isAuthenticated ? 'true' : 'false');
         if (this.isAuthenticated && this.tempPassword) {
@@ -78,6 +87,33 @@ class WallApp {
         }
 
         try {
+            if (wallKey === 'drafts') {
+                // Auth-only drafts list
+                const response = await fetch('/api/drafts', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ password: this.tempPassword })
+                });
+                const result = await response.json().catch(() => ({}));
+                if (!response.ok) {
+                    if (response.status === 401) {
+                        // Prompt for password then retry
+                        await this.promptForPassword().catch(() => {});
+                        // If still not authenticated, stop here
+                        if (!this.isAuthenticated) return;
+                        // retry once
+                        this.entriesCache.drafts = null;
+                        return this.loadEntries();
+                    }
+                    throw new Error(result.error || 'Failed to load drafts');
+                }
+                const fresh = result.data || [];
+                this.entriesCache.drafts = fresh;
+                this.entries = fresh;
+                this.renderEntries();
+                return;
+            }
+
             const endpoint = wallKey === 'rishu' ? '/api/entries' : '/api/friend-entries';
             const response = await fetch(endpoint);
             const result = await response.json();
@@ -94,7 +130,7 @@ class WallApp {
         }
     }
 
-    async saveEntry(text, password) {
+    async saveEntry(text, password, visibility = 'public') {
         try {
             const response = await fetch('/api/entries', {
                 method: 'POST',
@@ -103,7 +139,8 @@ class WallApp {
                 },
                 body: JSON.stringify({
                     text: text,
-                    password: password
+                    password: password,
+                    visibility
                 })
             });
 
@@ -138,6 +175,17 @@ class WallApp {
         // Toggle wall button
         this.dom.toggleWallButton.addEventListener('click', () => this.toggleWall());
 
+        // Drafts button (shown only when authenticated)
+        if (this.dom.draftsButton) {
+            this.dom.draftsButton.addEventListener('click', () => {
+                if (!this.isAuthenticated) {
+                    this.showPasswordForm();
+                    return;
+                }
+                location.hash = '#drafts';
+            });
+        }
+
         // Drag-and-drop listeners (auth-gated in handlers)
         this.dom.wall.addEventListener('dragover', (e) => this.onDragOver(e));
         this.dom.wall.addEventListener('drop', (e) => this.onDrop(e));
@@ -149,17 +197,24 @@ class WallApp {
 
     applyWallFromHash() {
         const hash = (location.hash || '').toLowerCase();
-        const nextWall = hash.includes('friend') ? 'friend' : 'rishu';
+        let nextWall;
+        if (hash.includes('friend')) nextWall = 'friend';
+        else if (hash.includes('draft')) nextWall = 'drafts';
+        else nextWall = 'rishu';
 
         this.currentWall = nextWall;
 
         if (this.currentWall === 'friend') {
             this.dom.wallTitle.textContent = "friends' wall";
             this.dom.toggleWallButton.textContent = "rishu's wall";
-        } else {
+        } else if (this.currentWall === 'rishu') {
             this.dom.wallTitle.textContent = "rishu's wall";
             this.dom.toggleWallButton.textContent = "friends' wall";
+        } else if (this.currentWall === 'drafts') {
+            this.dom.wallTitle.textContent = 'drafts';
+            this.dom.toggleWallButton.textContent = 'back to wall';
         }
+        this.updateAuthUI();
 
         // Render cached entries instantly if present, otherwise show loader
         const cached = this.entriesCache[this.currentWall];
@@ -237,13 +292,17 @@ class WallApp {
 
             entryDiv.appendChild(textSpan);
 
-            // Entry click to open modal (suppressed immediately after a drag)
+            // Entry click: view on public/friends, edit on drafts (auth only)
             entryDiv.addEventListener('click', (ev) => {
                 if (Date.now() < (this._suppressClickUntil || 0)) {
                     // ignore click generated by finishing a drag
                     return;
                 }
-                this.showEntry(entryText);
+                if (this.currentWall === 'drafts' && this.isAuthenticated) {
+                    this.showEditForm(entry);
+                } else {
+                    this.showEntry(entry);
+                }
             });
 
             // Pin/unpin + drag controls on rishu wall
@@ -276,6 +335,8 @@ class WallApp {
                     entryDiv.addEventListener('touchstart', (e) => this.onTouchStartDrag(e, entryDiv), { passive: false });
                 }
             }
+
+            // No inline edit button on rows
             this.dom.wall.appendChild(entryDiv);
         });
 
@@ -299,7 +360,34 @@ class WallApp {
     }
 
     showEntry(entry) {
-        this.dom.modalBody.innerHTML = `<div class="full-entry">${this.escapeHtml(entry)}</div>`;
+        const isObj = entry && typeof entry === 'object';
+        const text = isObj ? entry.text : String(entry || '');
+        const container = document.createElement('div');
+        const content = document.createElement('div');
+        content.className = 'full-entry';
+        content.innerHTML = this.escapeHtml(text);
+        container.appendChild(content);
+
+        // Add edit action at bottom for authenticated users on main wall
+        if (this.isAuthenticated && this.currentWall === 'rishu' && isObj) {
+            const actions = document.createElement('div');
+            actions.className = 'modal-actions';
+            const editBtn = document.createElement('button');
+            editBtn.type = 'button';
+            editBtn.className = 'action-edit-btn';
+            editBtn.innerHTML = `
+                <svg viewBox="0 0 24 24" aria-hidden="true" style="width:16px;height:16px;vertical-align:middle;margin-right:6px;">
+                  <path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+                  <path d="M14.06 6.19l1.83-1.83 3.75 3.75-1.83 1.83-3.75-3.75z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+                </svg>
+                Edit`;
+            editBtn.addEventListener('click', () => this.showEditForm(entry));
+            actions.appendChild(editBtn);
+            container.appendChild(actions);
+        }
+
+        this.dom.modalBody.innerHTML = '';
+        this.dom.modalBody.appendChild(container);
         this.openModal();
     }
 
@@ -334,7 +422,7 @@ class WallApp {
 
         const input = document.getElementById('passwordInput');
         const errorEl = document.getElementById('passwordError');
-        const submitBtn = form.querySelector('button[type="submit"]');
+        const submitBtn = form.querySelector('#publishBtn');
 
         const pwd = (input.value || '').trim();
         errorEl.textContent = '';
@@ -361,6 +449,7 @@ class WallApp {
             this.tempPassword = pwd;
             this.isAuthenticated = true;
             this.saveAuthState();
+            this.updateAuthUI();
             this.showEntryForm();
         })
         .catch((err) => {
@@ -380,13 +469,44 @@ class WallApp {
         form.innerHTML = `
             <h3>New Entry</h3>
             <textarea id="entryText" placeholder="Write your entry..." required></textarea>
-            <button type="submit">Add to Wall</button>
+            <div style="display:flex; gap:8px;">
+                <button type="submit" id="publishBtn">Publish</button>
+                <button type="button" id="saveDraftBtn">Save Draft</button>
+            </div>
         `;
 
         this.dom.modalBody.innerHTML = '';
         this.dom.modalBody.appendChild(form);
 
         form.addEventListener('submit', (e) => this.handleEntrySubmit(e));
+        const saveDraftBtn = form.querySelector('#saveDraftBtn');
+        if (saveDraftBtn) {
+            saveDraftBtn.addEventListener('click', async (e) => {
+                e.preventDefault();
+                const textarea = form.querySelector('#entryText');
+                const text = (textarea.value || '').trim();
+                if (!text) {
+                    textarea.value = '';
+                    textarea.focus();
+                    return;
+                }
+                try {
+                    await this.saveEntry(text, this.tempPassword, 'draft');
+                    // refresh drafts cache if needed
+                    this.entriesCache.drafts = null;
+                    if (this.currentWall === 'drafts') await this.loadEntries();
+                    this.closeModal();
+                } catch (error) {
+                    if (String(error && error.message) === 'Invalid password') {
+                        this.tempPassword = null;
+                        alert('Invalid password. Please try again.');
+                        this.closeModal();
+                    } else {
+                        alert('Error saving draft. Please try again.');
+                    }
+                }
+            });
+        }
 
         this.openModal();
 
@@ -419,6 +539,64 @@ class WallApp {
         }, 100);
     }
 
+    showEditForm(entry) {
+        const form = document.createElement('form');
+        form.className = 'entry-form';
+        form.innerHTML = `
+            <h3>Edit Entry</h3>
+            <textarea id="entryText" placeholder="Write your entry..." required></textarea>
+            <div style="display:flex; gap:8px;">
+                <button type="button" id="publishBtn">Publish</button>
+                <button type="button" id="saveDraftBtn">Save Draft</button>
+            </div>
+        `;
+
+        this.dom.modalBody.innerHTML = '';
+        this.dom.modalBody.appendChild(form);
+
+        const textarea = form.querySelector('#entryText');
+        textarea.value = entry.text || '';
+
+        const publishBtn = form.querySelector('#publishBtn');
+        const saveDraftBtn = form.querySelector('#saveDraftBtn');
+
+        const doUpdate = async (vis) => {
+            const text = (textarea.value || '').trim();
+            if (!text) { textarea.focus(); return; }
+            try {
+                await this.updateEntry(entry.id, text, vis);
+                this.entriesCache.rishu = null;
+                this.entriesCache.drafts = null;
+                await this.loadEntries();
+                this.closeModal();
+            } catch (e) {
+                const msg = String(e && e.message) || 'Error';
+                if (/Drafts require DB migration/i.test(msg)) {
+                    alert('Drafts require DB migration. Please run supabase db push.');
+                } else {
+                    alert(/Invalid password/i.test(msg) ? 'Invalid password. Please try again.' : 'Error updating entry.');
+                }
+            }
+        };
+
+        publishBtn.addEventListener('click', () => doUpdate('public'));
+        saveDraftBtn.addEventListener('click', () => doUpdate('draft'));
+
+        this.openModal();
+        setTimeout(() => textarea?.focus(), 100);
+    }
+
+    async updateEntry(id, text, visibility) {
+        const response = await fetch('/api/update-entry', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ id, text, visibility, password: this.tempPassword })
+        });
+        const result = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(result.error || 'Error');
+        return result.data;
+    }
+
     async handleEntrySubmit(e) {
         e.preventDefault();
 
@@ -442,7 +620,7 @@ class WallApp {
         form.classList.add('is-submitting');
 
         try {
-            await this.saveEntry(text, this.tempPassword);
+            await this.saveEntry(text, this.tempPassword, 'public');
             await this.loadEntries();
             this.closeModal();
         } catch (error) {
@@ -578,6 +756,7 @@ class WallApp {
                     this.tempPassword = pwd;
                     this.isAuthenticated = true;
                     this.saveAuthState();
+                    this.updateAuthUI();
                     this.closeModal();
                     resolve();
                 } catch (err) {
