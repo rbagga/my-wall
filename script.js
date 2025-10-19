@@ -431,21 +431,19 @@ class WallApp {
                   <path d="M4 21h16v-6H4z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
                 </svg>`;
             shareBtn.addEventListener('click', async () => {
+                // Show loading modal while generating link
+                this.showShareLoading();
                 try {
                     const { shortUrl } = await this.createShortLink(entry.id);
-                    try {
-                        await navigator.clipboard.writeText(shortUrl);
-                        shareBtn.classList.add('copied');
-                        setTimeout(() => shareBtn.classList.remove('copied'), 900);
-                    } catch {
-                        window.prompt('Copy link', shortUrl);
-                    }
+                    this.showShareModal(shortUrl);
                 } catch (e) {
                     const msg = String(e && e.message) || '';
                     if (/Short links require DB migration/i.test(msg)) {
-                        alert('Short links require DB migration. Please run supabase db push.');
+                        this.showShareError('Short links require DB migration. Please run supabase db push.');
+                    } else if (/External shortener failed/i.test(msg)) {
+                        this.showShareError('Short-link service unavailable. Please try again.');
                     } else {
-                        alert('Failed to create/copy link.');
+                        this.showShareError('Failed to create link. Please try again.');
                     }
                 }
             });
@@ -757,6 +755,82 @@ class WallApp {
         const result = await response.json().catch(() => ({}));
         if (!response.ok) throw new Error(result.error || 'Error');
         return result;
+    }
+
+    showShareLoading() {
+        const wrap = document.createElement('div');
+        wrap.className = 'share-loading';
+        wrap.innerHTML = `
+            <div class="spinner" aria-hidden="true"></div>
+            <div>Generating link…</div>
+        `;
+        this.dom.modalBody.innerHTML = '';
+        this.dom.modalBody.appendChild(wrap);
+        this.openModal();
+    }
+
+    showShareModal(shortUrl) {
+        const wrap = document.createElement('div');
+        wrap.className = 'entry-form share-box';
+        wrap.innerHTML = `
+            <h3>Share Link</h3>
+            <input id="shareLinkInput" type="text" readonly value="${this.escapeHtml(shortUrl)}" />
+            <div style="display:flex; gap:8px;">
+                <button type="button" id="copyShareBtn">Copy</button>
+                <a id="openShareBtn" class="btn-like" href="${this.escapeHtml(shortUrl)}" target="_blank" rel="noopener noreferrer">Open</a>
+            </div>
+        `;
+        this.dom.modalBody.innerHTML = '';
+        this.dom.modalBody.appendChild(wrap);
+        this.openModal();
+
+        const input = wrap.querySelector('#shareLinkInput');
+        const copyBtn = wrap.querySelector('#copyShareBtn');
+        // Auto-select for convenience
+        setTimeout(() => { try { input.select(); } catch(_){} }, 50);
+
+        const copyFn = async () => {
+            const val = input.value;
+            try {
+                await navigator.clipboard.writeText(val);
+                copyBtn.textContent = 'Copied!';
+                setTimeout(() => { copyBtn.textContent = 'Copy'; }, 1200);
+            } catch (_) {
+                // Fallback: execCommand
+                try {
+                    input.select();
+                    document.execCommand('copy');
+                    copyBtn.textContent = 'Copied!';
+                    setTimeout(() => { copyBtn.textContent = 'Copy'; }, 1200);
+                } catch (e) {
+                    alert('Copy failed. Select the text and press Cmd/Ctrl+C.');
+                }
+            }
+        };
+        copyBtn.addEventListener('click', copyFn);
+    }
+
+    showShareError(message) {
+        const wrap = document.createElement('div');
+        wrap.className = 'entry-form share-box';
+        wrap.innerHTML = `
+            <h3>Share Link</h3>
+            <div class="error">${this.escapeHtml(message)}</div>
+            <div style="display:flex; gap:8px;">
+                <button type="button" id="retryShareBtn">Try Again</button>
+                <button type="button" id="closeShareBtn">Close</button>
+            </div>
+        `;
+        this.dom.modalBody.innerHTML = '';
+        this.dom.modalBody.appendChild(wrap);
+        this.openModal();
+        const retry = wrap.querySelector('#retryShareBtn');
+        const close = wrap.querySelector('#closeShareBtn');
+        retry.addEventListener('click', () => {
+            // Replace with loading; caller will re-initiate share by clicking the icon again
+            this.showShareLoading();
+        });
+        close.addEventListener('click', () => this.closeModal());
     }
 
     async handleEntrySubmit(e) {

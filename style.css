@@ -505,6 +505,25 @@ button[type="submit"]:hover {
     font-size: 13px;
 }
 
+/* Share modal tweaks */
+.share-box .btn-like {
+    padding: 10px;
+    background: #333;
+    color: white;
+    border-radius: 4px;
+    text-decoration: none;
+    font-size: 14px;
+}
+.share-box .btn-like:hover { background: #555; }
+
+/* Share loading row */
+.share-loading {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 12px 0;
+}
+
 /* Dark mode toggle */
 .dark-mode-toggle {
     display: inline-block;

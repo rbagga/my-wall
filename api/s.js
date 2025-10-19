@@ -98,18 +98,34 @@ module.exports = async function handler(req, res) {
   <link rel="canonical" href="${escapeHtml(viewUrl)}" />
   <meta http-equiv="refresh" content="0;url=${escapeHtml(viewHash)}" />
   <style>
-    body { font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif; padding: 24px; }
-    .card { max-width: 680px; margin: 0 auto; border: 1px solid #e0e0e0; border-radius: 8px; padding: 16px; }
-    .desc { white-space: pre-wrap; color: #444; }
-    .actions { margin-top: 12px; }
-    a.btn { display:inline-block; padding:8px 12px; background:#333; color:#fff; border-radius:6px; text-decoration:none; }
+    :root {
+      --bg: #1a1a1a;
+      --fg: #e0e0e0;
+      --panel: #2a2a2a;
+      --border: #3a3a3a;
+      --muted: #aaa;
+      --btn-bg: #333;
+      --btn-bg-hover: #555;
+      --btn-fg: #fff;
+    }
+    * { box-sizing: border-box; }
+    body { margin:0; background: var(--bg); color: var(--fg); font-family: "SUSE Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+    .wrap { padding: 24px; min-height: 100vh; display: grid; place-items: center; }
+    .card { width: min(680px, 92%); background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 16px; }
+    h1 { margin: 0 0 8px 0; font-size: 18px; font-weight: 600; }
+    .desc { white-space: pre-wrap; color: var(--fg); opacity: 0.9; }
+    .actions { margin-top: 14px; display: flex; justify-content: flex-end; }
+    a.btn { display:inline-block; padding:10px 14px; background: var(--btn-bg); color: var(--btn-fg); border-radius:6px; text-decoration:none; }
+    a.btn:hover { background: var(--btn-bg-hover); }
   </style>
 </head>
 <body>
-  <div class="card">
-    <h1>${escapeHtml(title)}</h1>
-    <div class="desc">${escapeHtml(desc)}</div>
-    <div class="actions"><a class="btn" href="/${escapeHtml(viewHash)}">Open</a></div>
+  <div class="wrap">
+    <div class="card">
+      <h1>${escapeHtml(title)}</h1>
+      <div class="desc">${escapeHtml(desc)}</div>
+      <div class="actions"><a class="btn" href="/${escapeHtml(viewHash)}">Open</a></div>
+    </div>
   </div>
   <script>location.replace(${JSON.stringify(viewHash)});</script>
 </body>
