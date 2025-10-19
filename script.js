@@ -388,53 +388,65 @@ class WallApp {
         content.innerHTML = this.escapeHtml(text);
         container.appendChild(content);
 
-        // Add edit action at bottom for authenticated users on main wall
-        if (this.isAuthenticated && this.currentWall === 'rishu' && isObj) {
+        // Actions at bottom for main and friends wall entries
+        if ((this.currentWall === 'rishu' || this.currentWall === 'friend') && isObj) {
             const actions = document.createElement('div');
             actions.className = 'modal-actions';
 
             const left = document.createElement('div');
+            const center = document.createElement('div');
             const right = document.createElement('div');
+            center.className = 'actions-center';
             right.className = 'actions-right';
             actions.appendChild(left);
+            actions.appendChild(center);
             actions.appendChild(right);
 
-            // Delete button with confirm flow
-            const delBtn = document.createElement('button');
-            delBtn.type = 'button';
-            delBtn.className = 'danger';
-            delBtn.textContent = 'Delete';
-            left.appendChild(delBtn);
+            // Delete (auth only)
+            let delBtn = null;
+            if (this.isAuthenticated) {
+                delBtn = document.createElement('button');
+                delBtn.type = 'button';
+                delBtn.className = 'danger';
+                delBtn.textContent = 'Delete';
+                left.appendChild(delBtn);
+            }
 
-            const editBtn = document.createElement('button');
-            editBtn.type = 'button';
-            editBtn.className = 'action-edit-btn';
-            editBtn.innerHTML = `
-                <svg viewBox="0 0 24 24" aria-hidden="true" style="width:16px;height:16px;vertical-align:middle;margin-right:6px;">
-                  <path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
-                  <path d="M14.06 6.19l1.83-1.83 3.75 3.75-1.83 1.83-3.75-3.75z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
-                </svg>
-                Edit`;
-            editBtn.addEventListener('click', () => this.showEditForm(entry));
-            right.appendChild(editBtn);
+            // Edit (auth only, only on rishu wall)
+            if (this.isAuthenticated && this.currentWall === 'rishu') {
+                const editBtn = document.createElement('button');
+                editBtn.type = 'button';
+                editBtn.className = 'action-edit-btn';
+                editBtn.innerHTML = `
+                    <svg viewBox=\"0 0 24 24\" aria-hidden=\"true\" style=\"width:16px;height:16px;vertical-align:middle;margin-right:6px;\">
+                      <path d=\"M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25z\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.5\" stroke-linecap=\"round\" stroke-linejoin=\"round\"/>
+                      <path d=\"M14.06 6.19l1.83-1.83 3.75 3.75-1.83 1.83-3.75-3.75z\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.5\" stroke-linecap=\"round\" stroke-linejoin=\"round\"/>
+                    </svg>
+                    Edit`;
+                editBtn.addEventListener('click', () => this.showEditForm(entry));
+                right.appendChild(editBtn);
+            }
 
-            // Share icon button
+            // Share icon button (always visible)
             const shareBtn = document.createElement('button');
             shareBtn.type = 'button';
             shareBtn.className = 'icon-btn';
             shareBtn.title = 'Share link';
             shareBtn.setAttribute('aria-label', 'Share link');
+            // Tray-only share icon (rounded tray + up arrow), slightly larger
             shareBtn.innerHTML = `
-                <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
-                  <path d="M12 3v10" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
-                  <path d="M8 7l4-4 4 4" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
-                  <path d="M4 21h16v-6H4z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+                <svg viewBox=\"0 0 24 24\" width=\"22\" height=\"22\" aria-hidden=\"true\">
+                  <!-- Up arrow -->
+                  <path d=\"M12 13V6\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.6\" stroke-linecap=\"round\"/>
+                  <path d=\"M9 9l3-3 3 3\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.6\" stroke-linecap=\"round\" stroke-linejoin=\"round\"/>
+                  <!-- Rounded tray at bottom -->
+                  <rect x=\"5\" y=\"14\" width=\"14\" height=\"5\" rx=\"2.5\" ry=\"2.5\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.6\"/>
                 </svg>`;
             shareBtn.addEventListener('click', async () => {
                 // Show loading modal while generating link
                 this.showShareLoading();
                 try {
-                    const { shortUrl } = await this.createShortLink(entry.id);
+                    const { shortUrl } = await this.createShortLink(entry.id, this.currentWall === 'friend' ? 'friend' : 'rishu');
                     this.showShareModal(shortUrl);
                 } catch (e) {
                     const msg = String(e && e.message) || '';
@@ -447,45 +459,54 @@ class WallApp {
                     }
                 }
             });
-            right.appendChild(shareBtn);
+            center.appendChild(shareBtn);
 
             // Delete confirm UI (hidden until clicked)
-            const confirmWrap = document.createElement('div');
-            confirmWrap.className = 'delete-confirm';
-            confirmWrap.style.display = 'none';
-            confirmWrap.innerHTML = `
-                <small>Type "delete me" to confirm</small>
-                <div class="confirm-row">
-                  <input type="text" class="confirm-input" placeholder="delete me" />
-                  <button type="button" class="danger confirm-btn" disabled>Confirm</button>
-                </div>
-            `;
+            if (delBtn) {
+                const confirmWrap = document.createElement('div');
+                confirmWrap.className = 'delete-confirm';
+                confirmWrap.style.display = 'none';
+                confirmWrap.innerHTML = `
+                    <small>Type "delete me" to confirm</small>
+                    <div class="confirm-row">
+                      <input type="text" class="confirm-input" placeholder="delete me" />
+                      <button type="button" class="danger confirm-btn" disabled>Confirm</button>
+                    </div>
+                `;
 
-            delBtn.addEventListener('click', () => {
-                confirmWrap.style.display = confirmWrap.style.display === 'none' ? 'flex' : 'none';
-            });
+                delBtn.addEventListener('click', () => {
+                    confirmWrap.style.display = confirmWrap.style.display === 'none' ? 'flex' : 'none';
+                });
 
-            const input = confirmWrap.querySelector('.confirm-input');
-            const confirmBtn = confirmWrap.querySelector('.confirm-btn');
-            input.addEventListener('input', () => {
-                confirmBtn.disabled = !(input.value.trim().toLowerCase() === 'delete me');
-            });
-            confirmBtn.addEventListener('click', async () => {
-                confirmBtn.disabled = true;
-                try {
-                    await this.removeEntry(entry.id);
-                    this.entriesCache.rishu = null;
-                    this.entriesCache.drafts = null;
-                    await this.loadEntries();
-                    this.closeModal();
-                } catch (e) {
-                    alert('Failed to delete entry.');
-                    confirmBtn.disabled = false;
-                }
-            });
+                const input = confirmWrap.querySelector('.confirm-input');
+                const confirmBtn = confirmWrap.querySelector('.confirm-btn');
+                input.addEventListener('input', () => {
+                    confirmBtn.disabled = !(input.value.trim().toLowerCase() === 'delete me');
+                });
+                confirmBtn.addEventListener('click', async () => {
+                    confirmBtn.disabled = true;
+                    try {
+                        if (this.currentWall === 'friend') {
+                            await this.removeFriendEntry(entry.id);
+                        } else {
+                            await this.removeEntry(entry.id);
+                        }
+                        this.entriesCache.rishu = null;
+                        this.entriesCache.drafts = null;
+                        this.entriesCache.friend = null;
+                        await this.loadEntries();
+                        this.closeModal();
+                    } catch (e) {
+                        alert('Failed to delete entry.');
+                        confirmBtn.disabled = false;
+                    }
+                });
 
-            container.appendChild(actions);
-            container.appendChild(confirmWrap);
+                container.appendChild(actions);
+                container.appendChild(confirmWrap);
+            } else {
+                container.appendChild(actions);
+            }
         }
 
         this.dom.modalBody.innerHTML = '';
@@ -746,11 +767,22 @@ class WallApp {
         return result.ok;
     }
 
-    async createShortLink(entryId) {
+    async removeFriendEntry(id) {
+        const response = await fetch('/api/delete-friend-entry', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ id, password: this.tempPassword })
+        });
+        const result = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(result.error || 'Error');
+        return result.ok;
+    }
+
+    async createShortLink(entryId, type = 'rishu') {
         const response = await fetch('/api/shorten', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ entryId, password: this.tempPassword })
+            body: JSON.stringify({ entryId, type, password: this.tempPassword })
         });
         const result = await response.json().catch(() => ({}));
         if (!response.ok) throw new Error(result.error || 'Error');
