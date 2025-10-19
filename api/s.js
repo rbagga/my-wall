@@ -19,6 +19,19 @@ function truncate(s = '', n = 200) {
   return s.slice(0, n - 1) + '…';
 }
 
+function isBot(req) {
+  const ua = String(req.headers['user-agent'] || '').toLowerCase();
+  return (
+    ua.includes('bot') ||
+    ua.includes('facebookexternalhit') ||
+    ua.includes('twitterbot') ||
+    ua.includes('slackbot') ||
+    ua.includes('whatsapp') ||
+    ua.includes('discordbot') ||
+    ua.includes('linkedinbot')
+  );
+}
+
 module.exports = async function handler(req, res) {
   const code = (req.query && (req.query.c || req.query.code)) || null;
   if (!code) {
@@ -58,6 +71,13 @@ module.exports = async function handler(req, res) {
     const host = req.headers.host;
     const viewHash = `#entry=${encodeURIComponent(entryId)}`;
     const viewUrl = `${proto}://${host}/${viewHash}`;
+
+    // For humans: perform a 302 redirect to the SPA
+    if (!isBot(req)) {
+      res.statusCode = 302;
+      res.setHeader('Location', viewUrl);
+      return res.end();
+    }
 
     const title = 'Note on My Wall';
     const desc = truncate(String(entry.text || '').replace(/\s+/g, ' ').trim(), 200);

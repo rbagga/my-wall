@@ -111,6 +111,7 @@ class WallApp {
                 this.entriesCache.drafts = fresh;
                 this.entries = fresh;
                 this.renderEntries();
+                if (this._pendingEntryId) this.openPendingEntry();
                 return;
             }
 
@@ -124,6 +125,7 @@ class WallApp {
             this.entriesCache[wallKey] = fresh;
             this.entries = fresh;
             this.renderEntries();
+            if (this._pendingEntryId) this.openPendingEntry();
         } catch (error) {
             console.error('Error loading entries:', error);
             // If no cache, leave loader in place on error; otherwise entries remain
@@ -195,8 +197,22 @@ class WallApp {
         window.addEventListener('hashchange', () => this.applyWallFromHash());
     }
 
+    parseHashParams() {
+        const raw = (location.hash || '').replace(/^#/, '');
+        const parts = raw.split('&');
+        const params = {};
+        for (const p of parts) {
+            if (!p) continue;
+            const [k, v] = p.split('=');
+            if (!k) continue;
+            params[k.toLowerCase()] = v ? decodeURIComponent(v) : '';
+        }
+        return params;
+    }
+
     applyWallFromHash() {
         const hash = (location.hash || '').toLowerCase();
+        const params = this.parseHashParams();
         let nextWall;
         if (hash.includes('friend')) nextWall = 'friend';
         else if (hash.includes('draft')) nextWall = 'drafts';
@@ -216,11 +232,15 @@ class WallApp {
         }
         this.updateAuthUI();
 
+        // Capture pending entry id if present
+        this._pendingEntryId = params.entry ? String(params.entry) : null;
+
         // Render cached entries instantly if present, otherwise show loader
         const cached = this.entriesCache[this.currentWall];
         if (Array.isArray(cached)) {
             this.entries = cached;
             this.renderEntries();
+            if (this._pendingEntryId) this.openPendingEntry();
         } else {
             this.showLoading();
         }
@@ -994,6 +1014,19 @@ class WallApp {
                 return closest;
             }
         }, { offset: Number.NEGATIVE_INFINITY }).element;
+    }
+
+    openPendingEntry() {
+        const id = this._pendingEntryId;
+        this._pendingEntryId = null;
+        if (!id) return;
+        const entry = (this.entries || []).find(e => String(e.id) === String(id));
+        if (!entry) return;
+        if (this.currentWall === 'drafts' && this.isAuthenticated) {
+            this.showEditForm(entry);
+        } else {
+            this.showEntry(entry);
+        }
     }
 
     createTransparentDragImage() {

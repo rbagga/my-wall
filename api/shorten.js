@@ -21,13 +21,17 @@ module.exports = async function handler(req, res) {
   if (req.method === 'OPTIONS') return res.status(200).end();
 
   const configuredBase = process.env.PUBLIC_BASE_URL && String(process.env.PUBLIC_BASE_URL).trim();
-  const origin = configuredBase || ((req.headers['x-forwarded-proto'] && req.headers['x-forwarded-proto'] + '://' + req.headers.host) || '');
+  const host = String(req.headers.host || '');
+  const origin = configuredBase || ((req.headers['x-forwarded-proto'] && req.headers['x-forwarded-proto'] + '://' + host) || '');
+  const providerEnv = (process.env.SHORT_URL_PROVIDER || '').trim().toLowerCase();
+  const isLocalHost = /^(localhost:\d+|127\.0\.0\.1(?::\d+)?)/.test(host);
+  const enforceExternal = !!providerEnv && !isLocalHost; // don't force external shortener during local dev
 
   async function maybeShortenExternal(longUrl) {
     try {
       const provider = (process.env.SHORT_URL_PROVIDER || '').toLowerCase();
       if (provider === 'bitly') {
-        const token = process.env.BITLY_TOKEN || process.env.BITLY_API_TOKEN || '';
+        const token = (process.env.BITLY_TOKEN || process.env.BITLY_API_TOKEN || '').trim();
         if (!token) throw new Error('Missing BITLY_TOKEN');
         const resp = await fetch('https://api-ssl.bitly.com/v4/shorten', {
           method: 'POST',
@@ -41,8 +45,8 @@ module.exports = async function handler(req, res) {
         if (!resp.ok) throw new Error(data && data.message || 'Bitly error');
         if (data && data.link) return String(data.link);
       } else if (provider === 'shortio' || provider === 'short.io') {
-        const apiKey = process.env.SHORTIO_API_KEY || process.env.SHORT_IO_API_KEY || '';
-        const domain = process.env.SHORTIO_DOMAIN || process.env.SHORT_IO_DOMAIN || '';
+        const apiKey = (process.env.SHORTIO_API_KEY || process.env.SHORT_IO_API_KEY || '').trim();
+        const domain = (process.env.SHORTIO_DOMAIN || process.env.SHORT_IO_DOMAIN || '').trim();
         if (!apiKey || !domain) throw new Error('Missing SHORTIO_API_KEY or SHORTIO_DOMAIN');
         const resp = await fetch('https://api.short.io/links', {
           method: 'POST',
@@ -82,6 +86,9 @@ module.exports = async function handler(req, res) {
         const pathOnly = `/s/${encodeURIComponent(code)}`;
         const absolute = origin ? `${origin}${pathOnly}` : null;
         const ext = absolute ? await maybeShortenExternal(absolute) : null;
+        if (enforceExternal && !ext) {
+          return res.status(500).json({ error: 'External shortener failed' });
+        }
         const shortUrl = ext || (absolute || pathOnly);
         return res.status(200).json({ code, shortUrl, external: !!ext });
       }
@@ -94,6 +101,9 @@ module.exports = async function handler(req, res) {
           const pathOnly = `/s/${encodeURIComponent(code)}`;
           const absolute = origin ? `${origin}${pathOnly}` : null;
           const ext = absolute ? await maybeShortenExternal(absolute) : null;
+          if (enforceExternal && !ext) {
+            return res.status(500).json({ error: 'External shortener failed' });
+          }
           const shortUrl = ext || (absolute || pathOnly);
           return res.status(200).json({ code, shortUrl, external: !!ext });
         }
