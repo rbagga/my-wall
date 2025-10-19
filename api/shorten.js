@@ -68,12 +68,42 @@ module.exports = async function handler(req, res) {
 
   if (req.method === 'POST') {
     try {
-      const { entryId, password } = req.body || {};
+      const { entryId, password, type } = req.body || {};
       if (!entryId) return res.status(400).json({ error: 'Missing entryId' });
-      if (password !== process.env.WALL_PASSWORD) return res.status(401).json({ error: 'Invalid password' });
+      // Authorization: allow if password matches OR the entry is publicly visible
+      let authorized = false;
+      if (password && password === process.env.WALL_PASSWORD) {
+        authorized = true;
+      } else {
+        // Check entry visibility
+        try {
+          if (String(type).toLowerCase() === 'friend') {
+            // Friend entries are public by default; ensure it exists
+            const fr = await supabase.from('friend_entries').select('id').eq('id', entryId).maybeSingle();
+            if (fr && fr.data && !fr.error) authorized = true;
+            else if (fr && fr.error) throw fr.error;
+          } else {
+            const visQ = await supabase.from('wall_entries').select('visibility').eq('id', entryId).maybeSingle();
+            if (visQ && !visQ.error) {
+              const visibility = visQ.data && visQ.data.visibility;
+              if (!visibility || visibility === 'public') authorized = true; // treat missing column as public
+              else return res.status(403).json({ error: 'Entry is not publicly shareable' });
+            } else {
+              // If query failed (e.g., table/column mismatch), allow as public for backward-compat
+              authorized = true;
+            }
+          }
+        } catch (_) {
+          authorized = true;
+        }
+      }
+      if (!authorized) return res.status(401).json({ error: 'Unauthorized' });
 
       // Check if already exists
-      const existing = await supabase.from('short_links').select('*').eq('entry_id', entryId).maybeSingle();
+      const isFriend = String(type).toLowerCase() === 'friend';
+      const existing = isFriend
+        ? await supabase.from('short_links').select('*').eq('friend_entry_id', entryId).maybeSingle()
+        : await supabase.from('short_links').select('*').eq('entry_id', entryId).maybeSingle();
       if (existing.error) {
         const msg = String(existing.error.message || '');
         if (/relation .*short_links.* does not exist/i.test(msg)) {
@@ -96,7 +126,8 @@ module.exports = async function handler(req, res) {
       // Create new code with retries
       let code = randomCode(6);
       for (let i = 0; i < 5; i++) {
-        const ins = await supabase.from('short_links').insert([{ code, entry_id: entryId }]).select();
+        const payload = isFriend ? { code, friend_entry_id: entryId } : { code, entry_id: entryId };
+        const ins = await supabase.from('short_links').insert([payload]).select();
         if (!ins.error) {
           const pathOnly = `/s/${encodeURIComponent(code)}`;
           const absolute = origin ? `${origin}${pathOnly}` : null;

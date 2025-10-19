@@ -40,7 +40,7 @@ module.exports = async function handler(req, res) {
     return res.end('Missing code');
   }
   try {
-    const found = await supabase.from('short_links').select('entry_id').eq('code', code).maybeSingle();
+    const found = await supabase.from('short_links').select('entry_id, friend_entry_id').eq('code', code).maybeSingle();
     if (found.error) throw found.error;
     if (!found.data) {
       res.statusCode = 404;
@@ -48,19 +48,29 @@ module.exports = async function handler(req, res) {
       return res.end('Not found');
     }
     const entryId = found.data.entry_id;
-    // Fetch entry content and visibility
-    const { data: entry, error: e2 } = await supabase
-      .from('wall_entries')
-      .select('id, text, timestamp, visibility')
-      .eq('id', entryId)
-      .maybeSingle();
+    const friendId = found.data.friend_entry_id;
+    let entry = null;
+    let e2 = null;
+    let isFriend = false;
+    if (friendId) {
+      isFriend = true;
+      const q = await supabase.from('friend_entries').select('id, text, timestamp, name').eq('id', friendId).maybeSingle();
+      entry = q.data; e2 = q.error || null;
+    } else {
+      const q = await supabase
+        .from('wall_entries')
+        .select('id, text, timestamp, visibility')
+        .eq('id', entryId)
+        .maybeSingle();
+      entry = q.data; e2 = q.error || null;
+    }
     if (e2) throw e2;
     if (!entry) {
       res.statusCode = 404;
       res.setHeader('Content-Type', 'text/plain');
       return res.end('Not found');
     }
-    if (entry.visibility && entry.visibility !== 'public') {
+    if (!isFriend && entry.visibility && entry.visibility !== 'public') {
       // Do not leak draft content publicly
       res.statusCode = 403;
       res.setHeader('Content-Type', 'text/plain');
@@ -69,7 +79,7 @@ module.exports = async function handler(req, res) {
 
     const proto = req.headers['x-forwarded-proto'] || 'https';
     const host = req.headers.host;
-    const viewHash = `#entry=${encodeURIComponent(entryId)}`;
+    const viewHash = isFriend ? `#friends&entry=${encodeURIComponent(friendId)}` : `#entry=${encodeURIComponent(entryId)}`;
     const viewUrl = `${proto}://${host}/${viewHash}`;
 
     // For humans: perform a 302 redirect to the SPA
@@ -79,7 +89,7 @@ module.exports = async function handler(req, res) {
       return res.end();
     }
 
-    const title = 'Note on My Wall';
+    const title = isFriend ? (entry.name ? `${escapeHtml(entry.name)}’s Note` : 'Friend Note') : 'Note on My Wall';
     const desc = truncate(String(entry.text || '').replace(/\s+/g, ' ').trim(), 200);
 
     const html = `<!doctype html>
