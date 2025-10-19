@@ -374,6 +374,11 @@ body.dark-mode .modal-content {
     justify-content: space-between;
     margin-top: 14px;
 }
+.modal-actions .actions-right {
+    display: flex;
+    gap: 10px;
+    align-items: center;
+}
 
 .modal-actions button {
     padding: 10px;
@@ -410,6 +415,20 @@ body.dark-mode .modal-content {
     display: flex;
     gap: 8px;
 }
+
+/* Icon-only share button */
+.icon-btn {
+    background: transparent;
+    color: #333;
+    border: none;
+    padding: 6px;
+    border-radius: 6px;
+    cursor: pointer;
+}
+.icon-btn:hover { background: rgba(0,0,0,0.06); }
+.icon-btn.copied { background: rgba(0,128,0,0.15); }
+body.dark-mode .icon-btn { color: #e0e0e0; }
+body.dark-mode .icon-btn:hover { background: rgba(255,255,255,0.08); }
 
 /* Keep modal edit icon outlined, not filled */
 .modal-actions .action-edit-btn svg path {

@@ -1,0 +1,106 @@
+const { createClient } = require('@supabase/supabase-js');
+
+const supabase = createClient(
+  process.env.SUPABASE_URL,
+  process.env.SUPABASE_SERVICE_ROLE_KEY
+);
+
+function escapeHtml(s = '') {
+  return String(s)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+function truncate(s = '', n = 200) {
+  if (s.length <= n) return s;
+  return s.slice(0, n - 1) + '…';
+}
+
+module.exports = async function handler(req, res) {
+  const code = (req.query && (req.query.c || req.query.code)) || null;
+  if (!code) {
+    res.statusCode = 400;
+    res.setHeader('Content-Type', 'text/plain');
+    return res.end('Missing code');
+  }
+  try {
+    const found = await supabase.from('short_links').select('entry_id').eq('code', code).maybeSingle();
+    if (found.error) throw found.error;
+    if (!found.data) {
+      res.statusCode = 404;
+      res.setHeader('Content-Type', 'text/plain');
+      return res.end('Not found');
+    }
+    const entryId = found.data.entry_id;
+    // Fetch entry content and visibility
+    const { data: entry, error: e2 } = await supabase
+      .from('wall_entries')
+      .select('id, text, timestamp, visibility')
+      .eq('id', entryId)
+      .maybeSingle();
+    if (e2) throw e2;
+    if (!entry) {
+      res.statusCode = 404;
+      res.setHeader('Content-Type', 'text/plain');
+      return res.end('Not found');
+    }
+    if (entry.visibility && entry.visibility !== 'public') {
+      // Do not leak draft content publicly
+      res.statusCode = 403;
+      res.setHeader('Content-Type', 'text/plain');
+      return res.end('This note is not publicly shareable.');
+    }
+
+    const proto = req.headers['x-forwarded-proto'] || 'https';
+    const host = req.headers.host;
+    const viewHash = `#entry=${encodeURIComponent(entryId)}`;
+    const viewUrl = `${proto}://${host}/${viewHash}`;
+
+    const title = 'Note on My Wall';
+    const desc = truncate(String(entry.text || '').replace(/\s+/g, ' ').trim(), 200);
+
+    const html = `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>${escapeHtml(title)}</title>
+  <meta property="og:title" content="${escapeHtml(title)}" />
+  <meta property="og:description" content="${escapeHtml(desc)}" />
+  <meta property="og:type" content="article" />
+  <meta property="og:url" content="${escapeHtml(viewUrl)}" />
+  <meta name="twitter:card" content="summary" />
+  <meta name="twitter:title" content="${escapeHtml(title)}" />
+  <meta name="twitter:description" content="${escapeHtml(desc)}" />
+  <link rel="canonical" href="${escapeHtml(viewUrl)}" />
+  <meta http-equiv="refresh" content="0;url=${escapeHtml(viewHash)}" />
+  <style>
+    body { font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif; padding: 24px; }
+    .card { max-width: 680px; margin: 0 auto; border: 1px solid #e0e0e0; border-radius: 8px; padding: 16px; }
+    .desc { white-space: pre-wrap; color: #444; }
+    .actions { margin-top: 12px; }
+    a.btn { display:inline-block; padding:8px 12px; background:#333; color:#fff; border-radius:6px; text-decoration:none; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h1>${escapeHtml(title)}</h1>
+    <div class="desc">${escapeHtml(desc)}</div>
+    <div class="actions"><a class="btn" href="/${escapeHtml(viewHash)}">Open</a></div>
+  </div>
+  <script>location.replace(${JSON.stringify(viewHash)});</script>
+</body>
+</html>`;
+
+    res.statusCode = 200;
+    res.setHeader('Content-Type', 'text/html; charset=utf-8');
+    return res.end(html);
+  } catch (error) {
+    res.statusCode = 500;
+    res.setHeader('Content-Type', 'text/plain');
+    return res.end('Error');
+  }
+}

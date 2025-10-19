@@ -375,6 +375,7 @@ class WallApp {
 
             const left = document.createElement('div');
             const right = document.createElement('div');
+            right.className = 'actions-right';
             actions.appendChild(left);
             actions.appendChild(right);
 
@@ -396,6 +397,39 @@ class WallApp {
                 Edit`;
             editBtn.addEventListener('click', () => this.showEditForm(entry));
             right.appendChild(editBtn);
+
+            // Share icon button
+            const shareBtn = document.createElement('button');
+            shareBtn.type = 'button';
+            shareBtn.className = 'icon-btn';
+            shareBtn.title = 'Share link';
+            shareBtn.setAttribute('aria-label', 'Share link');
+            shareBtn.innerHTML = `
+                <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
+                  <path d="M12 3v10" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+                  <path d="M8 7l4-4 4 4" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+                  <path d="M4 21h16v-6H4z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+                </svg>`;
+            shareBtn.addEventListener('click', async () => {
+                try {
+                    const { shortUrl } = await this.createShortLink(entry.id);
+                    try {
+                        await navigator.clipboard.writeText(shortUrl);
+                        shareBtn.classList.add('copied');
+                        setTimeout(() => shareBtn.classList.remove('copied'), 900);
+                    } catch {
+                        window.prompt('Copy link', shortUrl);
+                    }
+                } catch (e) {
+                    const msg = String(e && e.message) || '';
+                    if (/Short links require DB migration/i.test(msg)) {
+                        alert('Short links require DB migration. Please run supabase db push.');
+                    } else {
+                        alert('Failed to create/copy link.');
+                    }
+                }
+            });
+            right.appendChild(shareBtn);
 
             // Delete confirm UI (hidden until clicked)
             const confirmWrap = document.createElement('div');
@@ -692,6 +726,17 @@ class WallApp {
         const result = await response.json().catch(() => ({}));
         if (!response.ok) throw new Error(result.error || 'Error');
         return result.ok;
+    }
+
+    async createShortLink(entryId) {
+        const response = await fetch('/api/shorten', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ entryId, password: this.tempPassword })
+        });
+        const result = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(result.error || 'Error');
+        return result;
     }
 
     async handleEntrySubmit(e) {
