@@ -532,6 +532,19 @@ body.dark-mode .modal-content {
     margin-bottom: 8px;
 }
 
+/* Link styles inside entries */
+.entry-text a,
+.full-entry a {
+    color: var(--accent);
+    text-decoration: underline;
+    text-underline-offset: 2px;
+    word-break: break-word;
+}
+.entry-text a:hover,
+.full-entry a:hover {
+    opacity: 0.9;
+}
+
 .modal-actions {
     display: flex;
     justify-content: space-between;
