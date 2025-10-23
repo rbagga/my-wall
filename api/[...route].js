@@ -579,7 +579,16 @@ async function shortenHandler(req, res) {
 
   if (req.method === 'POST') {
     try {
-      const { entryId, password, type } = req.body || {};
+      const { entryId, password, type, longUrl } = req.body || {};
+
+      // If a longUrl is provided (e.g., tech/songs hash links), just shorten externally
+      if (longUrl) {
+        const ext = await maybeShortenExternal(String(longUrl));
+        if (enforceExternal && !ext) return res.status(500).json({ error: 'External shortener failed' });
+        const shortUrl = ext || String(longUrl);
+        return res.status(200).json({ shortUrl, external: !!ext });
+      }
+
       if (!entryId) return res.status(400).json({ error: 'Missing entryId' });
       let authorized = false;
       if (password && password === process.env.WALL_PASSWORD) {

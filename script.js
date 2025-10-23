@@ -559,10 +559,11 @@ class WallApp {
                 // Show loading modal while generating link
                 this.showShareLoading();
                 try {
-                    if (this.currentWall === 'tech') {
+                    if (this.currentWall === 'tech' || this.currentWall === 'songs') {
                         const base = location.origin || '';
-                        const longUrl = `${base}/#tech&entry=${encodeURIComponent(entry.id)}`;
-                        this.showShareModal(longUrl);
+                        const longUrl = `${base}/#${this.currentWall}&entry=${encodeURIComponent(entry.id)}`;
+                        const { shortUrl } = await this.createShortLink(null, null, longUrl);
+                        this.showShareModal(shortUrl || longUrl);
                         return;
                     }
                     const { shortUrl } = await this.createShortLink(entry.id, this.currentWall === 'friend' ? 'friend' : 'rishu');
@@ -1204,11 +1205,11 @@ class WallApp {
         return result.ok;
     }
 
-    async createShortLink(entryId, type = 'rishu') {
+    async createShortLink(entryId, type = 'rishu', longUrl = null) {
         const response = await fetch('/api/shorten', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ entryId, type, password: this.tempPassword })
+            body: JSON.stringify(longUrl ? { longUrl } : { entryId, type, password: this.tempPassword })
         });
         const result = await response.json().catch(() => ({}));
         if (!response.ok) throw new Error(result.error || 'Error');
