@@ -470,8 +470,8 @@ class WallApp {
                 left.appendChild(delBtn);
             }
 
-            // Edit (auth only, only on rishu wall)
-            if (this.isAuthenticated && this.currentWall === 'rishu') {
+            // Edit (auth only) for rishu and tech walls
+            if (this.isAuthenticated && (this.currentWall === 'rishu' || this.currentWall === 'tech')) {
                 const editBtn = document.createElement('button');
                 editBtn.type = 'button';
                 editBtn.className = 'action-edit-btn btn-liquid';
@@ -481,12 +481,14 @@ class WallApp {
                       <path d=\"M14.06 6.19l1.83-1.83 3.75 3.75-1.83 1.83-3.75-3.75z\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.5\" stroke-linecap=\"round\" stroke-linejoin=\"round\"/>
                     </svg>
                     Edit`;
-                editBtn.addEventListener('click', () => this.showEditForm(entry));
+                editBtn.addEventListener('click', () => {
+                    if (this.currentWall === 'tech') this.showTechEditForm(entry);
+                    else this.showEditForm(entry);
+                });
                 right.appendChild(editBtn);
             }
 
-            // Share icon button (skip on tech wall)
-            if (this.currentWall !== 'tech') {
+            // Share icon button (all walls)
             const shareBtn = document.createElement('button');
             shareBtn.type = 'button';
             shareBtn.className = 'icon-btn';
@@ -505,6 +507,12 @@ class WallApp {
                 // Show loading modal while generating link
                 this.showShareLoading();
                 try {
+                    if (this.currentWall === 'tech') {
+                        const base = location.origin || '';
+                        const longUrl = `${base}/#tech&entry=${encodeURIComponent(entry.id)}`;
+                        this.showShareModal(longUrl);
+                        return;
+                    }
                     const { shortUrl } = await this.createShortLink(entry.id, this.currentWall === 'friend' ? 'friend' : 'rishu');
                     this.showShareModal(shortUrl);
                 } catch (e) {
@@ -519,7 +527,6 @@ class WallApp {
                 }
             });
             center.appendChild(shareBtn);
-            }
 
             // Delete confirm UI (hidden until clicked)
             if (delBtn) {
@@ -770,8 +777,9 @@ class WallApp {
             <h3>Edit Entry</h3>
             <input type="text" id="entryTitle" placeholder="Title (optional)" value="${(entry && entry.title) ? String(entry.title).replace(/&/g,'&amp;').replace(/"/g,'&quot;') : ''}">
             <textarea id="entryText" placeholder="Write your entry..." required></textarea>
-            <div style="display:flex; gap:8px;">
+            <div style="display:flex; gap:8px; align-items:center;">
                 <button type="button" id="publishBtn" class="btn-liquid">Publish</button>
+                ${this.currentWall === 'drafts' ? `<select id="publishTarget" style="margin-left:8px;"><option value="rishu">rishu's wall</option><option value="tech">tech notes</option></select>` : ''}
                 <button type="button" id="saveDraftBtn" class="btn-liquid">Save Draft</button>
                 <button type="button" id="deleteBtn" class="danger" style="margin-left:auto;">Delete</button>
             </div>
@@ -793,9 +801,20 @@ class WallApp {
             const title = (titleInput && titleInput.value) ? titleInput.value : '';
             if (!text) { textarea.focus(); return; }
             try {
-                await this.updateEntry(entry.id, text, vis, title);
+                if (vis === 'public' && this.currentWall === 'drafts') {
+                    const target = (form.querySelector('#publishTarget')?.value) || 'rishu';
+                    if (target === 'tech') {
+                        await this.saveTechNote(text, this.tempPassword, title);
+                        await this.removeEntry(entry.id);
+                    } else {
+                        await this.updateEntry(entry.id, text, 'public', title);
+                    }
+                } else {
+                    await this.updateEntry(entry.id, text, vis, title);
+                }
                 this.entriesCache.rishu = null;
                 this.entriesCache.drafts = null;
+                this.entriesCache.tech = null;
                 await this.loadEntries();
                 this.closeModal();
             } catch (e) {
@@ -961,6 +980,51 @@ class WallApp {
 
         this.openModal();
         setTimeout(() => document.getElementById('entryTitle')?.focus(), 100);
+    }
+
+    showTechEditForm(entry) {
+        const form = document.createElement('form');
+        form.className = 'entry-form';
+        form.innerHTML = `
+            <h3>Edit Tech Note</h3>
+            <input type="text" id="entryTitle" placeholder="Title (optional)" value="${(entry && entry.title) ? String(entry.title).replace(/&/g,'&amp;').replace(/\"/g,'&quot;') : ''}">
+            <textarea id="entryText" placeholder="Write your note..." required></textarea>
+            <div style="display:flex; gap:8px;">
+                <button type="button" id="saveTechBtn" class="btn-liquid">Save</button>
+            </div>
+        `;
+        this.dom.modalBody.innerHTML = '';
+        this.dom.modalBody.appendChild(form);
+        const textarea = form.querySelector('#entryText');
+        const titleInput = form.querySelector('#entryTitle');
+        textarea.value = entry.text || '';
+        const saveBtn = form.querySelector('#saveTechBtn');
+        saveBtn.addEventListener('click', async () => {
+            const text = (textarea.value || '').trim();
+            const title = (titleInput && titleInput.value) ? titleInput.value : '';
+            if (!text) { textarea.focus(); return; }
+            try {
+                await this.updateTechNote(entry.id, text, title);
+                this.entriesCache.tech = null;
+                await this.loadEntries();
+                this.closeModal();
+            } catch (e) {
+                alert('Error updating tech note.');
+            }
+        });
+        this.openModal();
+        setTimeout(() => titleInput?.focus(), 100);
+    }
+
+    async updateTechNote(id, text, title = null) {
+        const response = await fetch('/api/update-tech-note', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ id, text, title: (typeof title === 'string' && title.trim() && title.trim() !== '(optional)') ? title.trim() : undefined, password: this.tempPassword })
+        });
+        const result = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(result.error || 'Error');
+        return result.data;
     }
 
     async saveTechNote(text, password, title = null) {

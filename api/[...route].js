@@ -421,6 +421,28 @@ async function deleteTechNoteHandler(req, res) {
   }
 }
 
+async function updateTechNoteHandler(req, res) {
+  if (req.method !== 'POST' && req.method !== 'PATCH') return res.status(405).json({ error: 'Method not allowed' });
+  try {
+    const { id, text, password, title } = req.body || {};
+    if (!id) return res.status(400).json({ error: 'Missing id' });
+    if (password !== process.env.WALL_PASSWORD) return res.status(401).json({ error: 'Invalid password' });
+
+    const update = {};
+    if (typeof text === 'string') update.text = text;
+    if (typeof title === 'string') {
+      const cleanTitle = title.trim();
+      update.title = cleanTitle && cleanTitle !== '(optional)' ? cleanTitle : null;
+    }
+
+    let { data, error } = await supabase.from('tech_notes').update(update).eq('id', id).select();
+    if (error) throw error;
+    return res.status(200).json({ data: (data && data[0]) || null });
+  } catch (error) {
+    return res.status(500).json({ error: error.message });
+  }
+}
+
 async function shortenHandler(req, res) {
   const configuredBase = process.env.PUBLIC_BASE_URL && String(process.env.PUBLIC_BASE_URL).trim();
   const host = String(req.headers.host || '');
@@ -685,6 +707,7 @@ module.exports = async function handler(req, res) {
     if (head === 'drafts') return draftsHandler(req, res);
     if (head === 'tech-notes') return techNotesHandler(req, res);
     if (head === 'delete-tech-note') return deleteTechNoteHandler(req, res);
+    if (head === 'update-tech-note') return updateTechNoteHandler(req, res);
     if (head === 'shorten') return shortenHandler(req, res);
     if (head === 's') return sResolveHandler(req, res);
 
