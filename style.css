@@ -421,6 +421,26 @@ body.dark-mode .modal-content {
     display: flex;
     gap: 8px;
 }
+.delete-confirm .confirm-row .confirm-input {
+    flex: 1;
+}
+.delete-confirm .confirm-btn {
+    padding: 10px;
+    background: #8b1c1c; /* match other danger buttons */
+    color: #fff;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 14px;
+    transition: background 0.2s;
+}
+.delete-confirm .confirm-btn:hover {
+    background: #a22626;
+}
+.delete-confirm .confirm-btn:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+}
 
 /* Icon-only share button */
 .icon-btn {

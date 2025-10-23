@@ -6,8 +6,8 @@ class WallApp {
         this.entries = [];
         this.isAuthenticated = false;
         this.dom = {};
-        this.currentWall = 'rishu'; // 'rishu', 'friend', or 'drafts'
-        this.entriesCache = { rishu: null, friend: null, drafts: null };
+        this.currentWall = 'rishu'; // 'rishu', 'friend', 'tech', or 'drafts'
+        this.entriesCache = { rishu: null, friend: null, tech: null, drafts: null };
         this._dragImg = null; // legacy HTML5 DnD ghost suppressor (no longer used)
         this._mouseDrag = { active: false, el: null };
         this._dragIntent = null; // pending drag start info (click-vs-drag threshold)
@@ -27,6 +27,7 @@ class WallApp {
         this.dom.toggleWallButton = document.getElementById('toggleWallButton');
         this.dom.wallTitle = document.getElementById('wallTitle');
         this.dom.draftsButton = document.getElementById('draftsButton');
+        this.dom.techButton = document.getElementById('techButton');
         // no organize button in UI
 
         // Load data
@@ -49,6 +50,16 @@ class WallApp {
 
     showLoading() {
         this.dom.wall.innerHTML = '<div class="loading"><div class="spinner"></div></div>';
+    }
+
+    showEmptyState() {
+        const msg = (
+            this.currentWall === 'friend' ? "No friend entries yet." :
+            this.currentWall === 'tech' ? "No tech notes yet." :
+            this.currentWall === 'drafts' ? "No drafts yet." :
+            "No notes yet."
+        );
+        this.dom.wall.innerHTML = `<div class="empty-state">${this.escapeHtml(msg)}</div>`;
     }
 
     loadAuthState() {
@@ -115,7 +126,9 @@ class WallApp {
                 return;
             }
 
-            const endpoint = wallKey === 'rishu' ? '/api/entries' : '/api/friend-entries';
+            let endpoint = '/api/entries';
+            if (wallKey === 'friend') endpoint = '/api/friend-entries';
+            else if (wallKey === 'tech') endpoint = '/api/tech-notes';
             const response = await fetch(endpoint);
             const result = await response.json();
 
@@ -128,7 +141,10 @@ class WallApp {
             if (this._pendingEntryId) this.openPendingEntry();
         } catch (error) {
             console.error('Error loading entries:', error);
-            // If no cache, leave loader in place on error; otherwise entries remain
+            // If we have no cache, don't keep spinner forever; show empty state
+            if (!Array.isArray(this.entriesCache[this.currentWall])) {
+                this.showEmptyState();
+            }
         }
     }
 
@@ -188,6 +204,13 @@ class WallApp {
             });
         }
 
+        // Tech notes button (always visible)
+        if (this.dom.techButton) {
+            this.dom.techButton.addEventListener('click', () => {
+                location.hash = '#tech';
+            });
+        }
+
         // Drag-and-drop listeners (auth-gated in handlers)
         this.dom.wall.addEventListener('dragover', (e) => this.onDragOver(e));
         this.dom.wall.addEventListener('drop', (e) => this.onDrop(e));
@@ -214,7 +237,8 @@ class WallApp {
         const hash = (location.hash || '').toLowerCase();
         const params = this.parseHashParams();
         let nextWall;
-        if (hash.includes('friend')) nextWall = 'friend';
+        if (hash.includes('tech')) nextWall = 'tech';
+        else if (hash.includes('friend')) nextWall = 'friend';
         else if (hash.includes('draft')) nextWall = 'drafts';
         else nextWall = 'rishu';
 
@@ -222,6 +246,9 @@ class WallApp {
 
         if (this.currentWall === 'friend') {
             this.dom.wallTitle.textContent = "friends' wall";
+            this.dom.toggleWallButton.textContent = "rishu's wall";
+        } else if (this.currentWall === 'tech') {
+            this.dom.wallTitle.textContent = 'random tech notes';
             this.dom.toggleWallButton.textContent = "rishu's wall";
         } else if (this.currentWall === 'rishu') {
             this.dom.wallTitle.textContent = "rishu's wall";
@@ -250,6 +277,12 @@ class WallApp {
     handleAddButtonClick() {
         if (this.currentWall === 'friend') {
             this.showFriendEntryForm();
+        } else if (this.currentWall === 'tech') {
+            if (this.isAuthenticated) {
+                this.showTechEntryForm();
+            } else {
+                this.showPasswordForm();
+            }
         } else {
             if (this.isAuthenticated) {
                 this.showEntryForm();
@@ -263,6 +296,10 @@ class WallApp {
         this.dom.wall.innerHTML = '';
         // Sort: pinned first by pin_order asc, then others by timestamp desc
         const entries = [...this.entries];
+        if (!entries.length) {
+            this.showEmptyState();
+            return;
+        }
         const hasPinInfo = entries.some(e => typeof e.is_pinned !== 'undefined' || typeof e.pin_order !== 'undefined');
         let sorted = entries;
         if (hasPinInfo) {
@@ -388,8 +425,8 @@ class WallApp {
         content.innerHTML = this.escapeHtml(text);
         container.appendChild(content);
 
-        // Actions at bottom for main and friends wall entries
-        if ((this.currentWall === 'rishu' || this.currentWall === 'friend') && isObj) {
+        // Actions at bottom for main, friends, and tech walls
+        if ((this.currentWall === 'rishu' || this.currentWall === 'friend' || this.currentWall === 'tech') && isObj) {
             const actions = document.createElement('div');
             actions.className = 'modal-actions';
 
@@ -427,7 +464,8 @@ class WallApp {
                 right.appendChild(editBtn);
             }
 
-            // Share icon button (always visible)
+            // Share icon button (skip on tech wall)
+            if (this.currentWall !== 'tech') {
             const shareBtn = document.createElement('button');
             shareBtn.type = 'button';
             shareBtn.className = 'icon-btn';
@@ -460,6 +498,7 @@ class WallApp {
                 }
             });
             center.appendChild(shareBtn);
+            }
 
             // Delete confirm UI (hidden until clicked)
             if (delBtn) {
@@ -488,12 +527,15 @@ class WallApp {
                     try {
                         if (this.currentWall === 'friend') {
                             await this.removeFriendEntry(entry.id);
+                        } else if (this.currentWall === 'tech') {
+                            await this.removeTechNote(entry.id);
                         } else {
                             await this.removeEntry(entry.id);
                         }
                         this.entriesCache.rishu = null;
                         this.entriesCache.drafts = null;
                         this.entriesCache.friend = null;
+                        this.entriesCache.tech = null;
                         await this.loadEntries();
                         this.closeModal();
                     } catch (e) {
@@ -573,7 +615,9 @@ class WallApp {
             this.isAuthenticated = true;
             this.saveAuthState();
             this.updateAuthUI();
-            this.showEntryForm();
+            // Open the appropriate form for the current wall
+            if (this.currentWall === 'tech') this.showTechEntryForm();
+            else this.showEntryForm();
         })
         .catch((err) => {
             errorEl.textContent = 'Invalid password. Please try again.';
@@ -778,6 +822,81 @@ class WallApp {
         return result.ok;
     }
 
+    showTechEntryForm() {
+        const form = document.createElement('form');
+        form.className = 'entry-form';
+        form.innerHTML = `
+            <h3>New Tech Note</h3>
+            <textarea id=\"entryText\" placeholder=\"Write your note...\" required></textarea>
+            <button type=\"submit\">Publish</button>
+        `;
+
+        this.dom.modalBody.innerHTML = '';
+        this.dom.modalBody.appendChild(form);
+
+        form.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            if (form.classList.contains('is-submitting')) return;
+            const textarea = form.querySelector('#entryText');
+            const submitBtn = form.querySelector('button[type="submit"]');
+            const text = (textarea.value || '').trim();
+            if (!text) { textarea.value = ''; textarea.focus(); return; }
+            textarea.value = '';
+            if (submitBtn) submitBtn.disabled = true;
+            form.classList.add('is-submitting');
+            try {
+                const created = await this.saveTechNote(text, this.tempPassword);
+                // Optimistically add to UI/cache
+                const next = [created, ...(Array.isArray(this.entriesCache.tech) ? this.entriesCache.tech : [])];
+                this.entriesCache.tech = next;
+                if (this.currentWall === 'tech') {
+                    this.entries = next;
+                    this.renderEntries();
+                }
+                this.closeModal();
+            } catch (error) {
+                const msg = String(error && error.message) || '';
+                if (msg === 'Invalid password') {
+                    this.tempPassword = null;
+                    alert('Invalid password. Please try again.');
+                    this.closeModal();
+                } else if (/Tech notes require DB migration/i.test(msg)) {
+                    alert('Tech notes require DB migration. Please run supabase db push.');
+                } else {
+                    alert(msg ? `Error saving note: ${msg}` : 'Error saving note. Please try again.');
+                }
+            } finally {
+                if (submitBtn) submitBtn.disabled = false;
+                form.classList.remove('is-submitting');
+            }
+        });
+
+        this.openModal();
+        setTimeout(() => document.getElementById('entryText')?.focus(), 100);
+    }
+
+    async saveTechNote(text, password) {
+        const response = await fetch('/api/tech-notes', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ text, password })
+        });
+        const result = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(result.error || 'Error');
+        return result.data;
+    }
+
+    async removeTechNote(id) {
+        const response = await fetch('/api/delete-tech-note', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ id, password: this.tempPassword })
+        });
+        const result = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(result.error || 'Error');
+        return result.ok;
+    }
+
     async createShortLink(entryId, type = 'rishu') {
         const response = await fetch('/api/shorten', {
             method: 'POST',
@@ -888,8 +1007,14 @@ class WallApp {
         form.classList.add('is-submitting');
 
         try {
-            await this.saveEntry(text, this.tempPassword, 'public');
-            await this.loadEntries();
+            const created = await this.saveEntry(text, this.tempPassword, 'public');
+            // Optimistically add to UI/cache
+            const next = [created, ...(Array.isArray(this.entriesCache.rishu) ? this.entriesCache.rishu : [])];
+            this.entriesCache.rishu = next;
+            if (this.currentWall === 'rishu') {
+                this.entries = next;
+                this.renderEntries();
+            }
             this.closeModal();
         } catch (error) {
             if (error.message === 'Invalid password') {
@@ -933,8 +1058,14 @@ class WallApp {
         form.classList.add('is-submitting');
 
         try {
-            await this.saveFriendEntry(text, name);
-            await this.loadEntries();
+            const created = await this.saveFriendEntry(text, name);
+            // Optimistically add to UI/cache
+            const next = [created, ...(Array.isArray(this.entriesCache.friend) ? this.entriesCache.friend : [])];
+            this.entriesCache.friend = next;
+            if (this.currentWall === 'friend') {
+                this.entries = next;
+                this.renderEntries();
+            }
             this.closeModal();
         } catch (error) {
             // Provide clearer message for moderation blocks
