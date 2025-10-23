@@ -70,7 +70,7 @@ function randomCode(len = 6) {
 async function entriesHandler(req, res, parts) {
   if (req.method === 'GET') {
     try {
-      // Include entries where visibility is 'public' or NULL (back-compat)
+      // Prefer single filtered query (public or null visibility)
       const q = await supabase
         .from('wall_entries')
         .select('*')
@@ -78,18 +78,61 @@ async function entriesHandler(req, res, parts) {
         .order('is_pinned', { ascending: false })
         .order('pin_order', { ascending: true, nullsFirst: false })
         .order('timestamp', { ascending: false });
-      let { data, error } = q;
-      if (error) {
-        const fb = await supabase
-          .from('wall_entries')
-          .select('*')
-          .order('is_pinned', { ascending: false })
-          .order('pin_order', { ascending: true, nullsFirst: false })
-          .order('timestamp', { ascending: false });
-        if (fb.error) throw fb.error;
-        data = fb.data;
+      if (!q.error) {
+        return res.status(200).json({ data: q.data });
       }
-      return res.status(200).json({ data });
+      // Fallback path for environments without .or or column present
+      const pub = await supabase
+        .from('wall_entries')
+        .select('*')
+        .eq('visibility', 'public');
+      const nul = await supabase
+        .from('wall_entries')
+        .select('*')
+        .is('visibility', null);
+      if (pub.error && nul.error) {
+        // Final fallback (older schema with no visibility): return all
+        const all = await supabase
+          .from('wall_entries')
+          .select('*');
+        if (all.error) throw all.error;
+        const sorted = (all.data || []).slice().sort((a, b) => {
+          const ap = a.is_pinned ? 1 : 0;
+          const bp = b.is_pinned ? 1 : 0;
+          if (ap !== bp) return bp - ap;
+          if (ap === 1 && bp === 1) {
+            const ao = (a.pin_order ?? Number.MAX_SAFE_INTEGER);
+            const bo = (b.pin_order ?? Number.MAX_SAFE_INTEGER);
+            if (ao !== bo) return ao - bo;
+          }
+          const at = a.timestamp || '';
+          const bt = b.timestamp || '';
+          return (bt > at) ? 1 : (bt < at ? -1 : 0);
+        });
+        return res.status(200).json({ data: sorted });
+      }
+      // Merge pub + null and sort client-side to emulate server ordering
+      const merged = [...(pub.data || []), ...(nul.data || [])];
+      const seen = new Set();
+      const unique = merged.filter(r => {
+        const id = r && r.id;
+        if (id == null || seen.has(id)) return false;
+        seen.add(id); return true;
+      });
+      const sorted = unique.sort((a, b) => {
+        const ap = a.is_pinned ? 1 : 0;
+        const bp = b.is_pinned ? 1 : 0;
+        if (ap !== bp) return bp - ap;
+        if (ap === 1 && bp === 1) {
+          const ao = (a.pin_order ?? Number.MAX_SAFE_INTEGER);
+          const bo = (b.pin_order ?? Number.MAX_SAFE_INTEGER);
+          if (ao !== bo) return ao - bo;
+        }
+        const at = a.timestamp || '';
+        const bt = b.timestamp || '';
+        return (bt > at) ? 1 : (bt < at ? -1 : 0);
+      });
+      return res.status(200).json({ data: sorted });
     } catch (error) {
       return res.status(500).json({ error: error.message });
     }

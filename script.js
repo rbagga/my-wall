@@ -680,7 +680,7 @@ class WallApp {
         form.className = 'entry-form';
         form.innerHTML = `
             <h3>New Entry</h3>
-            <input type="text" id="entryTitle" value="(optional)">
+            <input type="text" id="entryTitle" placeholder="Title (optional)">
             <textarea id="entryText" placeholder="Write your entry..." required></textarea>
             <div style="display:flex; gap:8px;">
                 <button type="submit" id="publishBtn">Publish</button>
@@ -691,8 +691,7 @@ class WallApp {
         this.dom.modalBody.innerHTML = '';
         this.dom.modalBody.appendChild(form);
 
-        const titleInput = form.querySelector('#entryTitle');
-        this.attachOptionalTitleBehavior(titleInput);
+        // native placeholder handles optional UX for title
 
         form.addEventListener('submit', (e) => this.handleEntrySubmit(e));
         const saveDraftBtn = form.querySelector('#saveDraftBtn');
@@ -744,7 +743,7 @@ class WallApp {
         form.innerHTML = `
             <h3>New Entry</h3>
             <input type="text" id="entryName" placeholder="Your name" required>
-            <input type="text" id="entryTitle" value="(optional)">
+            <input type="text" id="entryTitle" placeholder="Title (optional)">
             <textarea id="entryText" placeholder="Write your entry..." required></textarea>
             <button type="submit">Add to Wall</button>
         `;
@@ -752,8 +751,7 @@ class WallApp {
         this.dom.modalBody.innerHTML = '';
         this.dom.modalBody.appendChild(form);
 
-        const titleInput = form.querySelector('#entryTitle');
-        this.attachOptionalTitleBehavior(titleInput);
+        // native placeholder handles optional UX for title
 
         form.addEventListener('submit', (e) => this.handleFriendEntrySubmit(e));
 
@@ -770,7 +768,7 @@ class WallApp {
         form.className = 'entry-form';
         form.innerHTML = `
             <h3>Edit Entry</h3>
-            <input type="text" id="entryTitle" value="${(entry && entry.title) ? String(entry.title).replace(/&/g,'&amp;').replace(/"/g,'&quot;') : '(optional)'}">
+            <input type="text" id="entryTitle" placeholder="Title (optional)" value="${(entry && entry.title) ? String(entry.title).replace(/&/g,'&amp;').replace(/"/g,'&quot;') : ''}">
             <textarea id="entryText" placeholder="Write your entry..." required></textarea>
             <div style="display:flex; gap:8px;">
                 <button type="button" id="publishBtn">Publish</button>
@@ -785,7 +783,7 @@ class WallApp {
         const textarea = form.querySelector('#entryText');
         const titleInput = form.querySelector('#entryTitle');
         textarea.value = entry.text || '';
-        this.attachOptionalTitleBehavior(titleInput);
+        // native placeholder handles optional UX for title
 
         const publishBtn = form.querySelector('#publishBtn');
         const saveDraftBtn = form.querySelector('#saveDraftBtn');
@@ -890,7 +888,7 @@ class WallApp {
         form.className = 'entry-form';
         form.innerHTML = `
             <h3>New Tech Note</h3>
-            <input type="text" id="entryTitle" value="(optional)">
+            <input type="text" id="entryTitle" placeholder="Title (optional)">
             <textarea id=\"entryText\" placeholder=\"Write your note...\" required></textarea>
             <button type=\"submit\" id=\"techSubmitBtn\">Save</button>
         `;
@@ -908,35 +906,57 @@ class WallApp {
             formEl.classList.add('is-submitting');
             const submitBtn = formEl.querySelector('#techSubmitBtn');
             if (submitBtn) submitBtn.disabled = true;
-            try {
-                const textarea = formEl.querySelector('#entryText');
-                const titleEl = formEl.querySelector('#entryTitle');
-                const text = (textarea.value || '').trim();
-                const title = (titleEl && titleEl.value) ? titleEl.value : '';
-                if (!text) { textarea.focus(); return; }
-                const created = await this.saveTechNote(text, this.tempPassword, title);
-                const next = [created, ...(Array.isArray(this.entriesCache.tech) ? this.entriesCache.tech : [])];
-                this.entriesCache.tech = next;
-                if (this.currentWall === 'tech') {
-                    this.entries = next;
-                    this.renderEntries();
-                }
-                this.closeModal();
-            } catch (error) {
-                const msg = String(error && error.message) || '';
-                if (msg === 'Invalid password') {
-                    this.tempPassword = null;
-                    alert('Invalid password. Please try again.');
-                    this.closeModal();
-                } else if (/Tech notes require DB migration/i.test(msg)) {
-                    alert('Tech notes require DB migration. Please run supabase db push.');
-                } else {
-                    alert(msg ? `Error saving note: ${msg}` : 'Error saving note. Please try again.');
-                }
-            } finally {
-                if (submitBtn) submitBtn.disabled = false;
-                formEl.classList.remove('is-submitting');
+
+            const textarea = formEl.querySelector('#entryText');
+            const titleEl = formEl.querySelector('#entryTitle');
+            const text = (textarea.value || '').trim();
+            const title = (titleEl && titleEl.value) ? titleEl.value : '';
+            if (!text) { textarea.focus(); return; }
+
+            // Optimistic insert
+            const tempId = `temp-${Date.now()}-${Math.random().toString(36).slice(2,6)}`;
+            const temp = { id: tempId, text, title: (title && title.trim()) ? title.trim() : undefined, timestamp: new Date().toISOString() };
+            const cur = Array.isArray(this.entriesCache.tech) ? this.entriesCache.tech : [];
+            this.entriesCache.tech = [temp, ...cur];
+            if (this.currentWall === 'tech') {
+                this.entries = this.entriesCache.tech;
+                this.renderEntries();
             }
+            this.closeModal();
+
+            this.saveTechNote(text, this.tempPassword, title)
+                .then((created) => {
+                    const list = Array.isArray(this.entriesCache.tech) ? this.entriesCache.tech : [];
+                    const idx = list.findIndex(e => e.id === tempId);
+                    if (idx !== -1) {
+                        this.entriesCache.tech = [created, ...list.slice(idx+1)];
+                        if (this.currentWall === 'tech') {
+                            this.entries = this.entriesCache.tech;
+                            this.renderEntries();
+                        }
+                    }
+                })
+                .catch((error) => {
+                    const msg = String(error && error.message) || '';
+                    // Rollback temp
+                    this.entriesCache.tech = (this.entriesCache.tech || []).filter(e => e.id !== tempId);
+                    if (this.currentWall === 'tech') {
+                        this.entries = this.entriesCache.tech;
+                        this.renderEntries();
+                    }
+                    if (msg === 'Invalid password') {
+                        this.tempPassword = null;
+                        alert('Invalid password. Please try again.');
+                    } else if (/Tech notes require DB migration/i.test(msg)) {
+                        alert('Tech notes require DB migration. Please run supabase db push.');
+                    } else {
+                        alert(msg ? `Error saving note: ${msg}` : 'Error saving note. Please try again.');
+                    }
+                })
+                .finally(() => {
+                    if (submitBtn) submitBtn.disabled = false;
+                    formEl.classList.remove('is-submitting');
+                });
         });
 
         this.openModal();
@@ -1092,29 +1112,60 @@ class WallApp {
         if (submitBtn) submitBtn.disabled = true;
         form.classList.add('is-submitting');
 
-        try {
-            const created = await this.saveEntry(text, this.tempPassword, 'public', title);
-            // Optimistically add to UI/cache
-            const next = [created, ...(Array.isArray(this.entriesCache.rishu) ? this.entriesCache.rishu : [])];
-            this.entriesCache.rishu = next;
-            if (this.currentWall === 'rishu') {
-                this.entries = next;
-                this.renderEntries();
-            }
-            this.closeModal();
-        } catch (error) {
-            if (error.message === 'Invalid password') {
-                // Password was wrong
-                this.tempPassword = null;
-                alert('Invalid password. Please try again.');
-                this.closeModal();
-            } else {
-                alert('Error saving entry. Please try again.');
-            }
-        } finally {
-            if (submitBtn) submitBtn.disabled = false;
-            form.classList.remove('is-submitting');
+        // Optimistic insert into UI/cache and close modal immediately
+        const tempId = `temp-${Date.now()}-${Math.random().toString(36).slice(2,6)}`;
+        const tempEntry = {
+            id: tempId,
+            text,
+            title: (title && title.trim()) ? title.trim() : undefined,
+            timestamp: new Date().toISOString(),
+            is_pinned: false,
+            pin_order: null,
+            visibility: 'public'
+        };
+        const current = Array.isArray(this.entriesCache.rishu) ? this.entriesCache.rishu : [];
+        this.entriesCache.rishu = [tempEntry, ...current];
+        if (this.currentWall === 'rishu') {
+            this.entries = this.entriesCache.rishu;
+            this.renderEntries();
         }
+        this.closeModal();
+
+        // Persist to server; reconcile temp with real id
+        this.saveEntry(text, this.tempPassword, 'public', title)
+            .then((created) => {
+                const list = Array.isArray(this.entriesCache.rishu) ? this.entriesCache.rishu : [];
+                const idx = list.findIndex(e => e.id === tempId);
+                if (idx !== -1) {
+                    this.entriesCache.rishu = [created, ...list.slice(idx+1)];
+                    if (this.currentWall === 'rishu') {
+                        this.entries = this.entriesCache.rishu;
+                        this.renderEntries();
+                    }
+                } else {
+                    // If not found, prepend created
+                    this.entriesCache.rishu = [created, ...list];
+                }
+            })
+            .catch((error) => {
+                // Remove temp and notify
+                const list = Array.isArray(this.entriesCache.rishu) ? this.entriesCache.rishu : [];
+                this.entriesCache.rishu = list.filter(e => e.id !== tempId);
+                if (this.currentWall === 'rishu') {
+                    this.entries = this.entriesCache.rishu;
+                    this.renderEntries();
+                }
+                if (String(error && error.message) === 'Invalid password') {
+                    this.tempPassword = null;
+                    alert('Invalid password. Please try again.');
+                } else {
+                    alert('Error saving entry. Please try again.');
+                }
+            })
+            .finally(() => {
+                if (submitBtn) submitBtn.disabled = false;
+                form.classList.remove('is-submitting');
+            });
     }
 
     async handleFriendEntrySubmit(e) {
@@ -1142,35 +1193,50 @@ class WallApp {
         // Immediately clear and prevent double submit
         nameInput.value = '';
         textarea.value = '';
-        if (titleEl) titleEl.value = '(optional)';
+        if (titleEl) titleEl.value = '';
         if (submitBtn) submitBtn.disabled = true;
         form.classList.add('is-submitting');
 
-        try {
-            const created = await this.saveFriendEntry(text, name, title);
-            // Optimistically add to UI/cache
-            const next = [created, ...(Array.isArray(this.entriesCache.friend) ? this.entriesCache.friend : [])];
-            this.entriesCache.friend = next;
-            if (this.currentWall === 'friend') {
-                this.entries = next;
-                this.renderEntries();
-            }
-            this.closeModal();
-        } catch (error) {
-            // Provide clearer message for moderation blocks
-            const msg = String(error && error.message || '');
-            if (/inappropriate/i.test(msg)) {
-                alert('Your entry was blocked due to inappropriate language (in the message or name). Please edit and try again.');
-                // Restore inputs so user can edit
-                nameInput.value = name;
-                textarea.value = text;
-            } else {
-                alert('Error saving entry. Please try again.');
-            }
-        } finally {
-            if (submitBtn) submitBtn.disabled = false;
-            form.classList.remove('is-submitting');
+        // Optimistic insert to UI and close modal immediately
+        const tempId = `temp-${Date.now()}-${Math.random().toString(36).slice(2,6)}`;
+        const temp = { id: tempId, name, text, title: (title && title.trim()) ? title.trim() : undefined, timestamp: new Date().toISOString() };
+        const cur = Array.isArray(this.entriesCache.friend) ? this.entriesCache.friend : [];
+        this.entriesCache.friend = [temp, ...cur];
+        if (this.currentWall === 'friend') {
+            this.entries = this.entriesCache.friend;
+            this.renderEntries();
         }
+        this.closeModal();
+
+        this.saveFriendEntry(text, name, title)
+            .then((created) => {
+                const list = Array.isArray(this.entriesCache.friend) ? this.entriesCache.friend : [];
+                const idx = list.findIndex(e => e.id === tempId);
+                if (idx !== -1) {
+                    this.entriesCache.friend = [created, ...list.slice(idx+1)];
+                    if (this.currentWall === 'friend') {
+                        this.entries = this.entriesCache.friend;
+                        this.renderEntries();
+                    }
+                }
+            })
+            .catch((error) => {
+                const msg = String(error && error.message || '');
+                this.entriesCache.friend = (this.entriesCache.friend || []).filter(e => e.id !== tempId);
+                if (this.currentWall === 'friend') {
+                    this.entries = this.entriesCache.friend;
+                    this.renderEntries();
+                }
+                if (/inappropriate/i.test(msg)) {
+                    alert('Your entry was blocked due to inappropriate language (in the message or name). Please edit and try again.');
+                } else {
+                    alert('Error saving entry. Please try again.');
+                }
+            })
+            .finally(() => {
+                if (submitBtn) submitBtn.disabled = false;
+                form.classList.remove('is-submitting');
+            });
     }
 
     async saveFriendEntry(text, name, title = null) {
