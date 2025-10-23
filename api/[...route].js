@@ -443,6 +443,99 @@ async function updateTechNoteHandler(req, res) {
   }
 }
 
+// Song Quotes API (similar to tech_notes)
+async function songQuotesHandler(req, res) {
+  if (req.method === 'GET') {
+    try {
+      let q = await supabase.from('song_quotes').select('*').order('timestamp', { ascending: false });
+      if (q.error) {
+        if (String(q.error.code) === '42703' || /column\s+"?timestamp"?/i.test(String(q.error.message || ''))) {
+          const fb = await supabase.from('song_quotes').select('*').order('id', { ascending: false });
+          if (fb.error) {
+            if (String(fb.error.code) === '42P01' || /song_quotes/i.test(String(fb.error.message || ''))) {
+              return res.status(200).json({ data: [] });
+            }
+            throw fb.error;
+          }
+          return res.status(200).json({ data: fb.data });
+        }
+        if (String(q.error.code) === '42P01' || /song_quotes/i.test(String(q.error.message || ''))) {
+          return res.status(200).json({ data: [] });
+        }
+        throw q.error;
+      }
+      return res.status(200).json({ data: q.data });
+    } catch (error) {
+      return res.status(500).json({ error: error.message });
+    }
+  }
+  if (req.method === 'POST') {
+    try {
+      const { text, password, title, spotify_url } = req.body || {};
+      if (!text) return res.status(400).json({ error: 'Text is required' });
+      if (password !== process.env.WALL_PASSWORD) return res.status(401).json({ error: 'Invalid password' });
+      const cleanTitle = (typeof title === 'string' && title.trim().length > 0 && title.trim() !== '(optional)') ? title.trim() : null;
+      const row = { text, title: cleanTitle, spotify_url: (typeof spotify_url === 'string' && spotify_url.trim()) ? spotify_url.trim() : null, timestamp: new Date().toISOString() };
+      let ins = await supabase.from('song_quotes').insert([row]).select();
+      if (ins.error) {
+        if (String(ins.error.code) === '42P01' || /song_quotes/i.test(String(ins.error.message || ''))) {
+          return res.status(400).json({ error: 'Song quotes require DB migration. Please run supabase db push.' });
+        }
+        // Fallback without extra columns
+        const fb = await supabase.from('song_quotes').insert([{ text }]).select();
+        if (fb.error) throw ins.error || fb.error;
+        ins = fb;
+      }
+      return res.status(200).json({ data: ins.data[0] });
+    } catch (error) {
+      return res.status(500).json({ error: error.message });
+    }
+  }
+  return res.status(405).json({ error: 'Method not allowed' });
+}
+
+async function deleteSongQuoteHandler(req, res) {
+  if (req.method !== 'POST' && req.method !== 'DELETE') return res.status(405).json({ error: 'Method not allowed' });
+  try {
+    const body = req.body || {};
+    const id = body.id || (req.query && req.query.id);
+    const password = body.password || (req.query && req.query.password);
+    if (!id) return res.status(400).json({ error: 'Missing id' });
+    if (password !== process.env.WALL_PASSWORD) return res.status(401).json({ error: 'Invalid password' });
+    const { error } = await supabase.from('song_quotes').delete().eq('id', id);
+    if (error) throw error;
+    return res.status(200).json({ ok: true });
+  } catch (error) {
+    return res.status(500).json({ error: error.message });
+  }
+}
+
+async function updateSongQuoteHandler(req, res) {
+  if (req.method !== 'POST' && req.method !== 'PATCH') return res.status(405).json({ error: 'Method not allowed' });
+  try {
+    const { id, text, password, title, spotify_url } = req.body || {};
+    if (!id) return res.status(400).json({ error: 'Missing id' });
+    if (password !== process.env.WALL_PASSWORD) return res.status(401).json({ error: 'Invalid password' });
+
+    const update = {};
+    if (typeof text === 'string') update.text = text;
+    if (typeof title === 'string') {
+      const cleanTitle = title.trim();
+      update.title = cleanTitle && cleanTitle !== '(optional)' ? cleanTitle : null;
+    }
+    if (typeof spotify_url === 'string') {
+      const clean = spotify_url.trim();
+      update.spotify_url = clean ? clean : null;
+    }
+
+    let { data, error } = await supabase.from('song_quotes').update(update).eq('id', id).select();
+    if (error) throw error;
+    return res.status(200).json({ data: (data && data[0]) || null });
+  } catch (error) {
+    return res.status(500).json({ error: error.message });
+  }
+}
+
 async function shortenHandler(req, res) {
   const configuredBase = process.env.PUBLIC_BASE_URL && String(process.env.PUBLIC_BASE_URL).trim();
   const host = String(req.headers.host || '');
@@ -708,6 +801,9 @@ module.exports = async function handler(req, res) {
     if (head === 'tech-notes') return techNotesHandler(req, res);
     if (head === 'delete-tech-note') return deleteTechNoteHandler(req, res);
     if (head === 'update-tech-note') return updateTechNoteHandler(req, res);
+    if (head === 'song-quotes') return songQuotesHandler(req, res);
+    if (head === 'delete-song-quote') return deleteSongQuoteHandler(req, res);
+    if (head === 'update-song-quote') return updateSongQuoteHandler(req, res);
     if (head === 'shorten') return shortenHandler(req, res);
     if (head === 's') return sResolveHandler(req, res);
 

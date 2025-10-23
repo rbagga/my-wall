@@ -565,6 +565,34 @@ body.dark-mode .modal-content {
     opacity: 0.9;
 }
 
+/* Spotify thumbnails in list */
+.spotify-thumb {
+    width: 36px;
+    height: 36px;
+    object-fit: cover;
+    border-radius: 6px;
+    margin-left: 8px;
+    margin-right: 8px;
+}
+
+/* Songs modal layout */
+.song-header {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 10px;
+}
+.song-cover {
+    width: 72px;
+    height: 72px;
+    border-radius: 10px;
+    object-fit: cover;
+}
+.song-titlebox { display: flex; flex-direction: column; }
+.song-preview { margin: 8px 0 14px; }
+.spotify-embed { margin: 8px 0 14px; }
+.spotify-embed iframe { width: 100%; max-width: 100%; border: 0; border-radius: 8px; }
+
 .modal-actions {
     display: flex;
     justify-content: space-between;

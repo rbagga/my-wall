@@ -6,8 +6,10 @@ class WallApp {
         this.entries = [];
         this.isAuthenticated = false;
         this.dom = {};
-        this.currentWall = 'rishu'; // 'rishu', 'friend', 'tech', or 'drafts'
-        this.entriesCache = { rishu: null, friend: null, tech: null, drafts: null };
+        this.currentWall = 'rishu'; // 'rishu', 'friend', 'tech', 'songs', or 'drafts'
+        this.entriesCache = { rishu: null, friend: null, tech: null, songs: null, drafts: null };
+        this.spotifyCache = new Map();
+        this.spotifyEmbedCache = new Map();
         this._dragImg = null; // legacy HTML5 DnD ghost suppressor (no longer used)
         this._mouseDrag = { active: false, el: null };
         this._dragIntent = null; // pending drag start info (click-vs-drag threshold)
@@ -28,6 +30,7 @@ class WallApp {
         this.dom.wallTitle = document.getElementById('wallTitle');
         this.dom.draftsButton = document.getElementById('draftsButton');
         this.dom.techButton = document.getElementById('techButton');
+        this.dom.songsButton = document.getElementById('songsButton');
         // no organize button in UI
 
         // Load data
@@ -56,6 +59,7 @@ class WallApp {
         const msg = (
             this.currentWall === 'friend' ? "No friend entries yet." :
             this.currentWall === 'tech' ? "No tech notes yet." :
+            this.currentWall === 'songs' ? "No song quotes yet." :
             this.currentWall === 'drafts' ? "No drafts yet." :
             "No notes yet."
         );
@@ -129,6 +133,7 @@ class WallApp {
             let endpoint = '/api/entries';
             if (wallKey === 'friend') endpoint = '/api/friend-entries';
             else if (wallKey === 'tech') endpoint = '/api/tech-notes';
+            else if (wallKey === 'songs') endpoint = '/api/song-quotes';
             const response = await fetch(endpoint);
             const result = await response.json();
 
@@ -212,6 +217,13 @@ class WallApp {
             });
         }
 
+        // Song quotes button (always visible)
+        if (this.dom.songsButton) {
+            this.dom.songsButton.addEventListener('click', () => {
+                location.hash = '#songs';
+            });
+        }
+
         // Drag-and-drop listeners (auth-gated in handlers)
         this.dom.wall.addEventListener('dragover', (e) => this.onDragOver(e));
         this.dom.wall.addEventListener('drop', (e) => this.onDrop(e));
@@ -239,6 +251,7 @@ class WallApp {
         const params = this.parseHashParams();
         let nextWall;
         if (hash.includes('tech')) nextWall = 'tech';
+        else if (hash.includes('songs')) nextWall = 'songs';
         else if (hash.includes('friend')) nextWall = 'friend';
         else if (hash.includes('draft')) nextWall = 'drafts';
         else nextWall = 'rishu';
@@ -250,6 +263,9 @@ class WallApp {
             this.dom.toggleWallButton.textContent = "rishu's wall";
         } else if (this.currentWall === 'tech') {
             this.dom.wallTitle.textContent = 'random tech notes';
+            this.dom.toggleWallButton.textContent = "rishu's wall";
+        } else if (this.currentWall === 'songs') {
+            this.dom.wallTitle.textContent = 'song quotes';
             this.dom.toggleWallButton.textContent = "rishu's wall";
         } else if (this.currentWall === 'rishu') {
             this.dom.wallTitle.textContent = "rishu's wall";
@@ -281,6 +297,12 @@ class WallApp {
         } else if (this.currentWall === 'tech') {
             if (this.isAuthenticated) {
                 this.showTechEntryForm();
+            } else {
+                this.showPasswordForm();
+            }
+        } else if (this.currentWall === 'songs') {
+            if (this.isAuthenticated) {
+                this.showSongsEntryForm();
             } else {
                 this.showPasswordForm();
             }
@@ -344,6 +366,15 @@ class WallApp {
                 entryDiv.appendChild(timestampSpan);
             }
 
+            // Spotify thumbnail for songs wall (after timestamp)
+            if (this.currentWall === 'songs' && entry.spotify_url) {
+                const thumb = document.createElement('img');
+                thumb.alt = 'Album art';
+                thumb.className = 'spotify-thumb';
+                this.fetchSpotifyArt(entry.spotify_url).then((url) => { if (url) thumb.src = url; });
+                entryDiv.appendChild(thumb);
+            }
+
             // Title + divider + body text
             const hasTitle = typeof entry.title === 'string' && entry.title.trim().length > 0;
             if (hasTitle) {
@@ -363,6 +394,8 @@ class WallApp {
 
             entryDiv.appendChild(textSpan);
 
+            // (thumb moved earlier)
+
             // Entry click: view on public/friends, edit on drafts (auth only)
             entryDiv.addEventListener('click', (ev) => {
                 // Allow clicking links without opening modal
@@ -374,12 +407,12 @@ class WallApp {
                     // ignore click generated by finishing a drag
                     return;
                 }
-                if (this.currentWall === 'drafts' && this.isAuthenticated) {
-                    this.showEditForm(entry);
-                } else {
-                    this.showEntry(entry);
-                }
-            });
+        if (this.currentWall === 'drafts' && this.isAuthenticated) {
+            this.showEditForm(entry);
+        } else {
+            this.showEntry(entry);
+        }
+    });
 
             // Pin/unpin + drag controls on rishu wall
             if (this.currentWall === 'rishu') {
@@ -439,8 +472,8 @@ class WallApp {
         const isObj = entry && typeof entry === 'object';
         const text = isObj ? entry.text : String(entry || '');
         const container = document.createElement('div');
-        // Optional title heading
-        if (isObj && entry.title && String(entry.title).trim()) {
+        // Optional title heading (skip in songs modal when spotify shows metadata)
+        if (isObj && entry.title && String(entry.title).trim() && !(this.currentWall === 'songs' && entry && entry.spotify_url)) {
             const h = document.createElement('h3');
             h.className = 'full-entry-title';
             h.textContent = String(entry.title).trim();
@@ -449,10 +482,23 @@ class WallApp {
         const content = document.createElement('div');
         content.className = 'full-entry';
         content.innerHTML = this.linkify(text);
+
+        // Songs modal: show Spotify embed only (no extra art/title)
+        if (this.currentWall === 'songs' && entry && entry.spotify_url) {
+            const embedWrap = document.createElement('div');
+            embedWrap.className = 'spotify-embed';
+            container.appendChild(embedWrap);
+            this.fetchSpotifyOEmbed(entry.spotify_url)
+                .then((data) => {
+                    if (data && data.html) embedWrap.innerHTML = data.html;
+                })
+                .catch(() => {});
+        }
+
         container.appendChild(content);
 
-        // Actions at bottom for main, friends, and tech walls
-        if ((this.currentWall === 'rishu' || this.currentWall === 'friend' || this.currentWall === 'tech') && isObj) {
+        // Actions at bottom for main, friends, tech, and songs walls
+        if ((this.currentWall === 'rishu' || this.currentWall === 'friend' || this.currentWall === 'tech' || this.currentWall === 'songs') && isObj) {
             const actions = document.createElement('div');
             actions.className = 'modal-actions';
 
@@ -475,8 +521,8 @@ class WallApp {
                 left.appendChild(delBtn);
             }
 
-            // Edit (auth only) for rishu and tech walls
-            if (this.isAuthenticated && (this.currentWall === 'rishu' || this.currentWall === 'tech')) {
+            // Edit (auth only) for rishu, tech, songs walls
+            if (this.isAuthenticated && (this.currentWall === 'rishu' || this.currentWall === 'tech' || this.currentWall === 'songs')) {
                 const editBtn = document.createElement('button');
                 editBtn.type = 'button';
                 editBtn.className = 'action-edit-btn btn-liquid clear';
@@ -488,6 +534,7 @@ class WallApp {
                     Edit`;
                 editBtn.addEventListener('click', () => {
                     if (this.currentWall === 'tech') this.showTechEditForm(entry);
+                    else if (this.currentWall === 'songs') this.showSongsEditForm(entry);
                     else this.showEditForm(entry);
                 });
                 right.appendChild(editBtn);
@@ -574,6 +621,15 @@ class WallApp {
                                 this.entriesCache.tech = this.entriesCache.tech.filter(e => e.id !== entry.id);
                                 if (this.currentWall === 'tech') {
                                     this.entries = this.entriesCache.tech;
+                                    this.renderEntries();
+                                }
+                            }
+                        } else if (this.currentWall === 'songs') {
+                            await this.removeSongQuote(entry.id);
+                            if (Array.isArray(this.entriesCache.songs)) {
+                                this.entriesCache.songs = this.entriesCache.songs.filter(e => e.id !== entry.id);
+                                if (this.currentWall === 'songs') {
+                                    this.entries = this.entriesCache.songs;
                                     this.renderEntries();
                                 }
                             }
@@ -774,6 +830,46 @@ class WallApp {
         setTimeout(() => {
             document.getElementById('entryName')?.focus();
         }, 100);
+    }
+
+    showSongsEntryForm() {
+        const form = document.createElement('form');
+        form.className = 'entry-form';
+        form.innerHTML = `
+            <h3>New Song Quote</h3>
+            <input type="text" id="entryTitle" placeholder="Song / Artist (optional)">
+            <textarea id="entryText" placeholder="Paste a lyric or quote..." required></textarea>
+            <input type="url" id="spotifyUrl" placeholder="Spotify track/album URL (optional)">
+            <div style="display:flex; gap:8px; align-items:center;">
+                <button type="button" id="saveSongBtn" class="btn-liquid clear">Publish</button>
+            </div>
+        `;
+        this.dom.modalBody.innerHTML = '';
+        this.dom.modalBody.appendChild(form);
+        const saveBtn = form.querySelector('#saveSongBtn');
+        saveBtn.addEventListener('click', async () => {
+            const textarea = form.querySelector('#entryText');
+            const titleEl = form.querySelector('#entryTitle');
+            const spotEl = form.querySelector('#spotifyUrl');
+            const text = (textarea.value || '').trim();
+            const title = (titleEl && titleEl.value) ? titleEl.value : '';
+            const spotify_url = (spotEl && spotEl.value) ? spotEl.value.trim() : '';
+            if (!text) { textarea.focus(); return; }
+            try {
+                const created = await this.saveSongQuote(text, this.tempPassword, title, spotify_url);
+                const cur = Array.isArray(this.entriesCache.songs) ? this.entriesCache.songs : [];
+                this.entriesCache.songs = [created, ...cur];
+                if (this.currentWall === 'songs') { this.entries = this.entriesCache.songs; this.renderEntries(); }
+                this.closeModal();
+            } catch (e) {
+                const msg = String(e && e.message) || '';
+                if (/Song quotes require DB migration/i.test(msg)) alert('Song quotes require DB migration. Please run supabase db push.');
+                else if (/Invalid password/i.test(msg)) { this.tempPassword = null; alert('Invalid password. Please try again.'); this.closeModal(); }
+                else alert('Error saving song quote.');
+            }
+        });
+        this.openModal();
+        setTimeout(() => document.getElementById('entryTitle')?.focus(), 100);
     }
 
     showEditForm(entry) {
@@ -1016,6 +1112,43 @@ class WallApp {
                 this.closeModal();
             } catch (e) {
                 alert('Error updating tech note.');
+            }
+        });
+        this.openModal();
+        setTimeout(() => titleInput?.focus(), 100);
+    }
+
+    showSongsEditForm(entry) {
+        const form = document.createElement('form');
+        form.className = 'entry-form';
+        form.innerHTML = `
+            <h3>Edit Song Quote</h3>
+            <input type="text" id="entryTitle" placeholder="Song / Artist (optional)" value="${(entry && entry.title) ? String(entry.title).replace(/&/g,'&amp;').replace(/\"/g,'&quot;') : ''}">
+            <textarea id="entryText" placeholder="Write your note..." required></textarea>
+            <input type="url" id="spotifyUrl" placeholder="Spotify track/album URL (optional)" value="${entry && entry.spotify_url ? String(entry.spotify_url).replace(/&/g,'&amp;').replace(/\"/g,'&quot;') : ''}">
+            <div style="display:flex; gap:8px;">
+                <button type="button" id="saveSongBtn" class="btn-liquid clear">Save</button>
+            </div>
+        `;
+        this.dom.modalBody.innerHTML = '';
+        this.dom.modalBody.appendChild(form);
+        const textarea = form.querySelector('#entryText');
+        const titleInput = form.querySelector('#entryTitle');
+        const spotInput = form.querySelector('#spotifyUrl');
+        textarea.value = entry.text || '';
+        const saveBtn = form.querySelector('#saveSongBtn');
+        saveBtn.addEventListener('click', async () => {
+            const text = (textarea.value || '').trim();
+            const title = (titleInput && titleInput.value) ? titleInput.value : '';
+            const spotify_url = (spotInput && spotInput.value) ? spotInput.value.trim() : '';
+            if (!text) { textarea.focus(); return; }
+            try {
+                await this.updateSongQuote(entry.id, text, title, spotify_url);
+                this.entriesCache.songs = null;
+                await this.loadEntries();
+                this.closeModal();
+            } catch (e) {
+                alert('Error updating song quote.');
             }
         });
         this.openModal();
@@ -1847,6 +1980,69 @@ class WallApp {
         }
         out += this.escapeHtml(str.slice(last));
         return out;
+    }
+
+    async fetchSpotifyArt(spotifyUrl) {
+        try {
+            const url = String(spotifyUrl || '').trim();
+            if (!url) return null;
+            if (this.spotifyCache.has(url)) return this.spotifyCache.get(url);
+            const data = await this.fetchSpotifyOEmbed(url);
+            const thumb = data && (data.thumbnail_url || (data.thumbnail && data.thumbnail.url));
+            const val = thumb || null;
+            this.spotifyCache.set(url, val);
+            return val;
+        } catch (_) {
+            return null;
+        }
+    }
+
+    async fetchSpotifyOEmbed(spotifyUrl) {
+        try {
+            const url = String(spotifyUrl || '').trim();
+            if (!url) return null;
+            if (this.spotifyEmbedCache.has(url)) return this.spotifyEmbedCache.get(url);
+            const api = `https://open.spotify.com/oembed?url=${encodeURIComponent(url)}`;
+            const resp = await fetch(api);
+            const data = await resp.json().catch(() => ({}));
+            this.spotifyEmbedCache.set(url, data);
+            return data;
+        } catch (_) {
+            return null;
+        }
+    }
+
+    async saveSongQuote(text, password, title = null, spotify_url = null) {
+        const response = await fetch('/api/song-quotes', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ text, password, title: (typeof title === 'string' && title.trim() && title.trim() !== '(optional)') ? title.trim() : undefined, spotify_url: (typeof spotify_url === 'string' && spotify_url.trim()) ? spotify_url.trim() : undefined })
+        });
+        const result = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(result.error || 'Error');
+        return result.data;
+    }
+
+    async updateSongQuote(id, text, title = null, spotify_url = null) {
+        const response = await fetch('/api/update-song-quote', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ id, text, title: (typeof title === 'string' && title.trim() && title.trim() !== '(optional)') ? title.trim() : undefined, spotify_url: (typeof spotify_url === 'string' && spotify_url.trim()) ? spotify_url.trim() : undefined, password: this.tempPassword })
+        });
+        const result = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(result.error || 'Error');
+        return result.data;
+    }
+
+    async removeSongQuote(id) {
+        const response = await fetch('/api/delete-song-quote', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ id, password: this.tempPassword })
+        });
+        const result = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(result.error || 'Error');
+        return true;
     }
 
     toggleDarkMode() {
