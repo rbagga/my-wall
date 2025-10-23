@@ -64,10 +64,11 @@ body.dark-mode a.btn-liquid {
     border-bottom: 1px solid rgba(180,200,120,0.35);
     -webkit-backdrop-filter: saturate(160%) blur(12px);
     backdrop-filter: saturate(160%) blur(12px);
-    display: flex;
-    justify-content: center;
+    display: grid;
+    grid-template-columns: 1fr auto 1fr;
+    grid-template-areas: 'left title toggle';
     align-items: center;
-    position: relative;
+    column-gap: 12px;
     transition: background 0.3s, border-color 0.3s;
     min-height: 48px;
 }
@@ -78,46 +79,36 @@ body.dark-mode .header {
 }
 
 .header-title {
+    grid-area: title;
+    justify-self: center;
     font-size: 16px;
     font-weight: 400;
     margin: 0;
+    white-space: nowrap;
 }
 
 .header-left {
-    position: absolute;
-    left: 16px;
+    grid-area: left;
+    justify-self: start;
     display: flex;
     flex-direction: row;
     gap: 8px;
     flex-wrap: wrap;
-    max-width: calc(100% - 100px);
+    min-width: 0;
 }
 
-@media (max-width: 600px) {
+@media (max-width: 900px) {
     .header {
-        flex-direction: column;
         padding: 8px 16px;
-        gap: 8px;
-        min-height: auto;
+        row-gap: 8px;
+        grid-template-columns: 1fr auto;
+        grid-template-areas:
+            'title toggle'
+            'left  left';
     }
-
-    .header-left {
-        position: static;
-        width: 100%;
-        max-width: 100%;
-        order: 2;
-        justify-content: center;
-    }
-
-    .header-title {
-        order: 1;
-    }
-
-    .dark-mode-toggle {
-        position: absolute;
-        top: 8px;
-        right: 16px;
-    }
+    .header-left { justify-self: center; justify-content: center; }
+    .header-title { justify-self: center; }
+    .dark-mode-toggle { justify-self: end; }
 }
 
 .add-button-header,
@@ -151,8 +142,9 @@ body.dark-mode .toggle-wall-button:hover {
 }
 
 .dark-mode-toggle {
-    position: absolute;
-    right: 16px;
+    grid-area: toggle;
+    justify-self: end;
+    position: relative;
 }
 
 #wall {
