@@ -465,7 +465,7 @@ class WallApp {
             if (this.isAuthenticated) {
                 delBtn = document.createElement('button');
                 delBtn.type = 'button';
-                delBtn.className = 'danger';
+                delBtn.className = 'btn-liquid clear';
                 delBtn.textContent = 'Delete';
                 left.appendChild(delBtn);
             }
@@ -474,7 +474,7 @@ class WallApp {
             if (this.isAuthenticated && (this.currentWall === 'rishu' || this.currentWall === 'tech')) {
                 const editBtn = document.createElement('button');
                 editBtn.type = 'button';
-                editBtn.className = 'action-edit-btn btn-liquid';
+                editBtn.className = 'action-edit-btn btn-liquid clear';
                 editBtn.innerHTML = `
                     <svg viewBox=\"0 0 24 24\" aria-hidden=\"true\" style=\"width:16px;height:16px;vertical-align:middle;margin-right:6px;\">
                       <path d=\"M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25z\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.5\" stroke-linecap=\"round\" stroke-linejoin=\"round\"/>
@@ -491,7 +491,7 @@ class WallApp {
             // Share icon button (all walls)
             const shareBtn = document.createElement('button');
             shareBtn.type = 'button';
-            shareBtn.className = 'icon-btn';
+            shareBtn.className = 'icon-btn btn-liquid clear';
             shareBtn.title = 'Share link';
             shareBtn.setAttribute('aria-label', 'Share link');
             // Tray-only share icon (rounded tray + up arrow), slightly larger
@@ -537,7 +537,7 @@ class WallApp {
                     <small>Type "delete me" to confirm</small>
                     <div class="confirm-row">
                       <input type="text" class="confirm-input" placeholder="delete me" />
-                      <button type="button" class="danger confirm-btn" disabled>Confirm</button>
+                      <button type="button" class="btn-liquid clear confirm-btn" disabled>Confirm</button>
                     </div>
                 `;
 
@@ -615,7 +615,7 @@ class WallApp {
             <h3>Enter Password</h3>
             <input type="password" id="passwordInput" placeholder="Password" required autocomplete="current-password">
             <div id="passwordError" class="error"></div>
-            <button type="submit" class="btn-liquid">Submit</button>
+            <button type="submit" class="btn-liquid clear">Submit</button>
         `;
 
         this.dom.modalBody.innerHTML = '';
@@ -690,8 +690,8 @@ class WallApp {
             <input type="text" id="entryTitle" placeholder="Title (optional)">
             <textarea id="entryText" placeholder="Write your entry..." required></textarea>
             <div style="display:flex; gap:8px;">
-                <button type="submit" id="publishBtn" class="btn-liquid">Publish</button>
-                <button type="button" id="saveDraftBtn" class="btn-liquid">Save Draft</button>
+                <button type="submit" id="publishBtn" class="btn-liquid clear">Publish</button>
+                <button type="button" id="saveDraftBtn" class="btn-liquid clear">Save Draft</button>
             </div>
         `;
 
@@ -752,7 +752,7 @@ class WallApp {
             <input type="text" id="entryName" placeholder="Your name" required>
             <input type="text" id="entryTitle" placeholder="Title (optional)">
             <textarea id="entryText" placeholder="Write your entry..." required></textarea>
-            <button type="submit" class="btn-liquid">Add to Wall</button>
+            <button type="submit" class="btn-liquid clear">Add to Wall</button>
         `;
 
         this.dom.modalBody.innerHTML = '';
@@ -778,10 +778,10 @@ class WallApp {
             <input type="text" id="entryTitle" placeholder="Title (optional)" value="${(entry && entry.title) ? String(entry.title).replace(/&/g,'&amp;').replace(/"/g,'&quot;') : ''}">
             <textarea id="entryText" placeholder="Write your entry..." required></textarea>
             <div style="display:flex; gap:8px; align-items:center;">
-                <button type="button" id="publishBtn" class="btn-liquid">Publish</button>
+                <button type="button" id="publishBtn" class="btn-liquid clear">Publish</button>
                 ${this.currentWall === 'drafts' ? `<select id="publishTarget" style="margin-left:8px;"><option value="rishu">rishu's wall</option><option value="tech">tech notes</option></select>` : ''}
-                <button type="button" id="saveDraftBtn" class="btn-liquid">Save Draft</button>
-                <button type="button" id="deleteBtn" class="danger" style="margin-left:auto;">Delete</button>
+                <button type="button" id="saveDraftBtn" class="btn-liquid clear">Save Draft</button>
+                <button type="button" id="deleteBtn" class="btn-liquid clear" style="margin-left:auto;">Delete</button>
             </div>
         `;
 
@@ -839,7 +839,7 @@ class WallApp {
             <small>Type "delete me" to confirm deletion</small>
             <div class="confirm-row">
               <input type="text" class="confirm-input" placeholder="delete me" />
-              <button type="button" class="danger confirm-btn" disabled>Confirm</button>
+              <button type="button" class="btn-liquid clear confirm-btn" disabled>Confirm</button>
             </div>
         `;
         form.appendChild(confirmWrap);
@@ -909,7 +909,7 @@ class WallApp {
             <h3>New Tech Note</h3>
             <input type="text" id="entryTitle" placeholder="Title (optional)">
             <textarea id=\"entryText\" placeholder=\"Write your note...\" required></textarea>
-            <button type=\"submit\" id=\"techSubmitBtn\" class=\"btn-liquid\">Save</button>
+            <button type=\"submit\" id=\"techSubmitBtn\" class=\"btn-liquid clear\">Save</button>
         `;
 
         this.dom.modalBody.innerHTML = '';
@@ -990,7 +990,7 @@ class WallApp {
             <input type="text" id="entryTitle" placeholder="Title (optional)" value="${(entry && entry.title) ? String(entry.title).replace(/&/g,'&amp;').replace(/\"/g,'&quot;') : ''}">
             <textarea id="entryText" placeholder="Write your note..." required></textarea>
             <div style="display:flex; gap:8px;">
-                <button type="button" id="saveTechBtn" class="btn-liquid">Save</button>
+                <button type="button" id="saveTechBtn" class="btn-liquid clear">Save</button>
             </div>
         `;
         this.dom.modalBody.innerHTML = '';
@@ -1095,8 +1095,8 @@ class WallApp {
             <h3>Share Link</h3>
             <input id="shareLinkInput" type="text" readonly value="${this.escapeHtml(shortUrl)}" />
             <div style="display:flex; gap:8px;">
-                <button type="button" id="copyShareBtn" class="btn-liquid">Copy</button>
-                <a id="openShareBtn" class="btn-like btn-liquid" href="${this.escapeHtml(shortUrl)}" target="_blank" rel="noopener noreferrer">Open</a>
+                <button type="button" id="copyShareBtn" class="btn-liquid clear">Copy</button>
+                <a id="openShareBtn" class="btn-like btn-liquid clear" href="${this.escapeHtml(shortUrl)}" target="_blank" rel="noopener noreferrer">Open</a>
             </div>
         `;
         this.dom.modalBody.innerHTML = '';
@@ -1136,8 +1136,8 @@ class WallApp {
             <h3>Share Link</h3>
             <div class="error">${this.escapeHtml(message)}</div>
             <div style="display:flex; gap:8px;">
-                <button type="button" id="retryShareBtn" class="btn-liquid">Try Again</button>
-                <button type="button" id="closeShareBtn" class="btn-liquid">Close</button>
+                <button type="button" id="retryShareBtn" class="btn-liquid clear">Try Again</button>
+                <button type="button" id="closeShareBtn" class="btn-liquid clear">Close</button>
             </div>
         `;
         this.dom.modalBody.innerHTML = '';
@@ -1375,7 +1375,7 @@ class WallApp {
                 <h3>Enter Password</h3>
                 <input type="password" id="passwordInput" placeholder="Password" required autocomplete="current-password">
                 <div id="passwordError" class="error"></div>
-                <button type="submit">Submit</button>
+                <button type="submit" class="btn-liquid clear">Submit</button>
             `;
             this.dom.modalBody.innerHTML = '';
             this.dom.modalBody.appendChild(form);

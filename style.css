@@ -37,6 +37,22 @@ body.dark-mode {
     color: #e0e0e0;
 }
 
+/* Ensure modal and header buttons match exactly across contexts */
+body.dark-mode .btn-liquid,
+body.dark-mode button.btn-liquid,
+body.dark-mode .entry-form button.btn-liquid,
+body.dark-mode .modal-actions button.btn-liquid,
+body.dark-mode .share-box .btn-like.btn-liquid,
+body.dark-mode a.btn-liquid {
+    --btn-glass-bg: rgba(255,255,255,0.12);
+    --btn-glass-bg-2: rgba(255,255,255,0.05);
+    --btn-glass-specular: rgba(255,255,255,0.50);
+    --btn-glass-border-outer: rgba(255,255,255,0.38);
+    --btn-glass-border-inner: rgba(255,255,255,0.18);
+    --btn-accent-a1: rgba(122,162,255,0.18);
+    --btn-accent-a2: rgba(122,162,255,0.10);
+}
+
 .container {
     margin: 0;
     padding: 0;
@@ -165,17 +181,16 @@ body.dark-mode .entry:hover { background: rgba(20,24,36,0.44); }
 
 /* Removed legacy solid backgrounds to keep theme translucency */
 
-body.dark-mode .entry:hover {
-    background: #333;
-}
+/* Remove solid gray hover in dark mode; keep translucent theme */
+/* body.dark-mode .entry:hover { background: #333; } */
 
 /* Pinned state + manage mode controls */
 .entry.pinned {
-    border-left: 3px solid #888;
+    border-left: 3px solid var(--accent);
 }
 
 body.dark-mode .entry.pinned {
-    border-left-color: #aaa;
+    border-left-color: var(--accent);
 }
 
 .pin-btn {
@@ -183,7 +198,8 @@ body.dark-mode .entry.pinned {
     border-radius: 6px;
     padding: 4px;
     cursor: pointer;
-    color: #555;
+    color: inherit;
+    opacity: 0.75;
     background: transparent;
     display: inline-flex;
     align-items: center;
@@ -244,7 +260,8 @@ body.dark-mode .entry.pinned {
 }
 
 body.dark-mode .pin-btn {
-    color: #ddd;
+    color: inherit;
+    opacity: 0.85;
 }
 
 .dragging {
@@ -338,8 +355,8 @@ body.dark-mode .add-button:hover { background: rgba(20,24,36,0.68); }
 .spinner {
     width: 24px;
     height: 24px;
-    border: 3px solid #ccc;
-    border-top-color: #333;
+    border: 3px solid rgba(79,143,255,0.22);
+    border-top-color: var(--accent);
     border-radius: 50%;
     animation: spin 1s linear infinite;
 }
@@ -349,8 +366,8 @@ body.dark-mode .add-button:hover { background: rgba(20,24,36,0.68); }
 }
 
 body.dark-mode .spinner {
-    border-color: #444;
-    border-top-color: #e0e0e0;
+    border-color: rgba(122,162,255,0.24);
+    border-top-color: var(--accent);
 }
 
 /* Liquid glass button (iOS-style) */
@@ -365,6 +382,9 @@ body.dark-mode .spinner {
     --glass-shadow: rgba(0,0,0,0.10);
     --glass-blur: 22px;
     --accent: #4f8fff;
+    /* Accent tint alphas for glass buttons */
+    --accent-a1: rgba(79,143,255,0.16);
+    --accent-a2: rgba(79,143,255,0.08);
 }
 body.dark-mode {
     --glass-fg: #f2f2f2;
@@ -377,6 +397,8 @@ body.dark-mode {
     --glass-shadow: rgba(0,0,0,0.35);
     --glass-blur: 24px;
     --accent: #7aa2ff;
+    --accent-a1: rgba(122,162,255,0.18);
+    --accent-a2: rgba(122,162,255,0.10);
 }
 
 .btn-liquid,
@@ -391,18 +413,12 @@ body.dark-mode {
     border: 1px solid transparent;
     color: var(--glass-fg);
     text-decoration: none;
+    /* idle gloss = 0; pure blue wash */
     background:
-        /* glossy top streak */
-        linear-gradient(180deg, rgba(255,255,255,0.55) 0%, rgba(255,255,255,0.30) 10%, rgba(255,255,255,0.00) 40%),
-        /* centered specular blob */
-        radial-gradient(140% 140% at 50% 50%, var(--glass-specular) 0%, rgba(255,255,255,0.30) 22%, rgba(255,255,255,0.06) 48%, rgba(255,255,255,0.00) 62%),
-        /* base tint */
-        linear-gradient(180deg, var(--glass-bg) 0%, var(--glass-bg-2) 100%);
-    -webkit-backdrop-filter: saturate(140%) blur(var(--glass-blur));
-    backdrop-filter: saturate(140%) blur(var(--glass-blur));
+        linear-gradient(180deg, var(--accent-a1) 0%, var(--accent-a2) 100%);
     box-shadow:
-        inset 0 0 0 0.5px var(--glass-border-inner),
-        0 0 0 1px var(--glass-border-outer),
+        inset 0 0 0 0.5px rgba(255,255,255,0.26),
+        0 0 0 1px rgba(255,255,255,0.48),
         0 5px 14px var(--glass-shadow);
     transition: transform 120ms ease, box-shadow 200ms ease, background 200ms ease, color 150ms ease;
     will-change: transform, box-shadow, background;
@@ -410,25 +426,20 @@ body.dark-mode {
 
 .btn-liquid:hover {
     transform: none;
-    -webkit-backdrop-filter: saturate(180%) blur(var(--glass-blur));
-    backdrop-filter: saturate(180%) blur(var(--glass-blur));
-    /* brighter gloss and tighter specular on hover */
     background:
-        linear-gradient(180deg, rgba(255,255,255,0.75) 0%, rgba(255,255,255,0.40) 12%, rgba(255,255,255,0.00) 44%),
-        radial-gradient(140% 140% at 50% 50%, var(--glass-specular) 0%, rgba(255,255,255,0.38) 24%, rgba(255,255,255,0.10) 52%, rgba(255,255,255,0.00) 66%),
-        linear-gradient(180deg, var(--glass-bg) 0%, var(--glass-bg-2) 100%);
+        linear-gradient(180deg, rgba(255,255,255,0.46) 0%, rgba(255,255,255,0.22) 14%, rgba(255,255,255,0.00) 44%),
+        linear-gradient(180deg, var(--accent-a1) 0%, var(--accent-a2) 100%);
     box-shadow:
-        inset 0 0 0 0.5px var(--glass-border-inner),
-        inset 0 10px 28px rgba(255,255,255,0.16),
-        0 0 0 1px var(--glass-border-outer),
-        0 12px 28px var(--glass-shadow);
+        inset 0 0 0 0.5px rgba(255,255,255,0.28),
+        inset 0 10px 24px rgba(255,255,255,0.12),
+        0 0 0 1px rgba(255,255,255,0.52),
+        0 12px 24px var(--glass-shadow);
 }
 
 .btn-liquid:active {
     transform: scale(0.99);
     box-shadow:
-        inset 0 0 0 0.5px var(--glass-border-inner),
-        0 0 0 1px var(--glass-border-outer),
+        inset 0 0 0 0.5px rgba(255,255,255,0.16),
         0 3px 8px var(--glass-shadow);
 }
 
@@ -437,24 +448,23 @@ body.dark-mode {
     box-shadow:
         0 0 0 2px rgba(255,255,255,0.6),
         0 0 0 4px var(--accent),
-        inset 0 0 0 0.5px var(--glass-border-inner),
+        inset 0 0 0 0.5px var(--btn-glass-border-inner),
         0 6px 16px var(--glass-shadow);
 }
 
 /* Size harmonization for header buttons */
 .add-button-header.btn-liquid,
-.toggle-wall-button.btn-liquid {
+.toggle-wall-button.btn-liquid,
+.password-form .btn-liquid,
+.entry-form .btn-liquid,
+.modal-actions .btn-liquid {
     padding: 6px 12px;
     font-size: 13px;
 }
 
-/* Danger button keeps solid look */
-.danger {
-    background: #b00020;
-    color: #fff;
-    border: none;
-}
-body.dark-mode .danger { background: #cf2b2b; }
+/* Danger theme: reuse btn-liquid visuals with red accent */
+.btn-liquid.danger { color: #fff; --accent-a1: var(--danger-a1); --accent-a2: var(--danger-a2); }
+.danger:active { transform: scale(0.99); }
 
 .modal {
     display: none;
@@ -486,11 +496,25 @@ body.dark-mode .danger { background: #cf2b2b; }
     position: relative;
     transition: background 0.3s;
     border: 1px solid rgba(160,200,120,0.26);
+    /* Ensure backdrop-filters inside modal (like on buttons) sample only modal surface */
+    isolation: isolate;
+    /* Slightly adjust glass variables in modal to avoid flat grey look */
+    --glass-bg: rgba(255,255,255,0.22);
+    --glass-bg-2: rgba(255,255,255,0.10);
+    --glass-specular: rgba(255,255,255,0.72);
+    --glass-border-outer: rgba(255,255,255,0.60);
+    --glass-border-inner: rgba(255,255,255,0.26);
 }
 
 body.dark-mode .modal-content {
     background: rgba(18,22,34,0.65);
     border-color: rgba(110,120,200,0.24);
+    /* Dark mode tuning for glass tokens within modal */
+    --glass-bg: rgba(255,255,255,0.10);
+    --glass-bg-2: rgba(255,255,255,0.045);
+    --glass-specular: rgba(255,255,255,0.44);
+    --glass-border-outer: rgba(255,255,255,0.34);
+    --glass-border-inner: rgba(255,255,255,0.16);
 }
 
 .close {
@@ -499,11 +523,12 @@ body.dark-mode .modal-content {
     right: 15px;
     font-size: 28px;
     cursor: pointer;
-    color: #999;
+    color: currentColor;
+    opacity: 0.6;
 }
 
 .close:hover {
-    color: #333;
+    opacity: 0.9;
 }
 
 .full-entry {
@@ -532,10 +557,10 @@ body.dark-mode .modal-content {
     align-items: center;
 }
 
-.modal-actions button {
+.modal-actions button:not(.btn-liquid) {
     padding: 10px;
-    background: #333;
-    color: white;
+    background: transparent;
+    color: inherit;
     border: none;
     border-radius: 4px;
     cursor: pointer;
@@ -543,16 +568,11 @@ body.dark-mode .modal-content {
     transition: background 0.2s;
 }
 
-.modal-actions button:hover {
-    background: #555;
+.modal-actions button:not(.btn-liquid):hover {
+    background: transparent;
 }
 
-.modal-actions .danger {
-    background: #8b1c1c;
-}
-.modal-actions .danger:hover {
-    background: #a22626;
-}
+/* Remove old solid overrides for danger in modal-actions */
 
 .delete-confirm {
     display: flex;
@@ -561,7 +581,8 @@ body.dark-mode .modal-content {
     margin-top: 10px;
 }
 .delete-confirm small {
-    color: #999;
+    color: currentColor;
+    opacity: 0.65;
 }
 .delete-confirm .confirm-row {
     display: flex;
@@ -571,17 +592,8 @@ body.dark-mode .modal-content {
     flex: 1;
 }
 .delete-confirm .confirm-btn {
-    padding: 10px;
-    background: #8b1c1c; /* match other danger buttons */
-    color: #fff;
-    border: none;
-    border-radius: 4px;
-    cursor: pointer;
-    font-size: 14px;
-    transition: background 0.2s;
-}
-.delete-confirm .confirm-btn:hover {
-    background: #a22626;
+    padding: 8px 14px;
+    border-radius: 999px;
 }
 .delete-confirm .confirm-btn:disabled {
     opacity: 0.6;
@@ -591,16 +603,22 @@ body.dark-mode .modal-content {
 /* Icon-only share button */
 .icon-btn {
     background: transparent;
-    color: #333;
+    color: inherit;
     border: none;
     padding: 6px;
     border-radius: 6px;
     cursor: pointer;
 }
-.icon-btn:hover { background: rgba(0,0,0,0.06); }
+.icon-btn:hover { background: var(--accent-a2); }
 .icon-btn.copied { background: rgba(0,128,0,0.15); }
 body.dark-mode .icon-btn { color: #e0e0e0; }
-body.dark-mode .icon-btn:hover { background: rgba(255,255,255,0.08); }
+body.dark-mode .icon-btn:hover { background: var(--accent-a2); }
+
+/* Make icon buttons glossy when also marked btn-liquid */
+.icon-btn.btn-liquid {
+    padding: 6px 10px;
+    border-radius: 999px;
+}
 
 /* Keep modal edit icon outlined, not filled */
 .modal-actions .action-edit-btn svg path {
@@ -624,36 +642,35 @@ body.dark-mode .icon-btn:hover { background: rgba(255,255,255,0.08); }
 
 .field-label {
     font-size: 12px;
-    color: #666;
+    color: inherit;
 }
-body.dark-mode .field-label { color: #aaa; }
 
 input, textarea {
     padding: 10px;
-    border: 1px solid #e0e0e0;
+    border: 1px solid rgba(160,200,120,0.26);
     border-radius: 4px;
     font-family: inherit;
     font-size: 14px;
-    background: white;
-    color: #333;
+    background: transparent;
+    color: inherit;
     transition: background 0.3s, color 0.3s, border-color 0.3s;
 }
 
 input:focus, textarea:focus {
     outline: none;
-    border-color: #333;
+    border-color: var(--accent);
 }
 
 body.dark-mode input,
 body.dark-mode textarea {
-    background: #1a1a1a;
+    background: transparent;
     color: #e0e0e0;
-    border-color: #3a3a3a;
+    border-color: rgba(110,120,200,0.24);
 }
 
 body.dark-mode input:focus,
 body.dark-mode textarea:focus {
-    border-color: #555;
+    border-color: var(--accent);
 }
 
 textarea {
@@ -661,11 +678,11 @@ textarea {
     resize: vertical;
 }
 
-.entry-form button,
-button[type="submit"] {
+.entry-form button:not(.btn-liquid),
+button[type="submit"]:not(.btn-liquid) {
     padding: 10px;
-    background: #333;
-    color: white;
+    background: transparent;
+    color: inherit;
     border: none;
     border-radius: 4px;
     cursor: pointer;
@@ -673,9 +690,9 @@ button[type="submit"] {
     transition: background 0.2s;
 }
 
-.entry-form button:hover,
-button[type="submit"]:hover {
-    background: #555;
+.entry-form button:not(.btn-liquid):hover,
+button[type="submit"]:not(.btn-liquid):hover {
+    background: transparent;
 }
 
 .error {
@@ -686,13 +703,13 @@ button[type="submit"]:hover {
 /* Share modal tweaks */
 .share-box .btn-like {
     padding: 10px;
-    background: #333;
-    color: white;
+    background: transparent;
+    color: inherit;
     border-radius: 4px;
     text-decoration: none;
     font-size: 14px;
 }
-.share-box .btn-like:hover { background: #555; }
+.share-box .btn-like:hover { background: transparent; }
 
 /* Share loading row */
 .share-loading {
@@ -722,9 +739,16 @@ button[type="submit"]:hover {
     left: 0;
     right: 0;
     bottom: 0;
-    background-color: #ccc;
     border-radius: 24px;
     transition: background-color 0.3s;
+    /* liquid glass track */
+    background:
+        linear-gradient(180deg, rgba(255,255,255,0.28) 0%, rgba(255,255,255,0.14) 12%, rgba(255,255,255,0.00) 44%),
+        linear-gradient(180deg, var(--accent-a1) 0%, var(--accent-a2) 100%);
+    box-shadow:
+        inset 0 0 0 0.5px rgba(255,255,255,0.20),
+        0 0 0 1px rgba(255,255,255,0.42),
+        0 4px 10px var(--glass-shadow);
 }
 
 .toggle-slider:before {
@@ -734,13 +758,21 @@ button[type="submit"]:hover {
     width: 18px;
     left: 3px;
     bottom: 3px;
-    background-color: white;
     border-radius: 50%;
     transition: transform 0.3s;
+    /* liquid glass knob */
+    background:
+        linear-gradient(180deg, rgba(255,255,255,0.78) 0%, rgba(255,255,255,0.52) 100%);
+    box-shadow:
+        inset 0 0 0 0.5px rgba(255,255,255,0.40),
+        0 0 0 1px rgba(255,255,255,0.50),
+        0 3px 8px var(--glass-shadow);
 }
 
 .dark-mode-toggle input:checked + .toggle-slider {
-    background-color: #555;
+    background:
+        linear-gradient(180deg, rgba(255,255,255,0.28) 0%, rgba(255,255,255,0.14) 12%, rgba(255,255,255,0.00) 44%),
+        linear-gradient(180deg, var(--accent-a1) 0%, var(--accent-a2) 100%);
 }
 
 .dark-mode-toggle input:checked + .toggle-slider:before {
@@ -752,7 +784,12 @@ button.btn-liquid,
 .entry-form button.btn-liquid,
 .modal-actions button.btn-liquid,
 .share-box .btn-like.btn-liquid,
-a.btn-liquid {
+a.btn-liquid,
+button.btn-liquid.clear,
+.entry-form button.btn-liquid.clear,
+.modal-actions button.btn-liquid.clear,
+.share-box .btn-like.btn-liquid.clear,
+a.btn-liquid.clear {
     position: relative;
     display: inline-flex;
     align-items: center;
@@ -762,15 +799,12 @@ a.btn-liquid {
     border: 1px solid transparent;
     color: var(--glass-fg);
     text-decoration: none;
+    /* idle gloss = 0; pure blue wash */
     background:
-        linear-gradient(180deg, rgba(255,255,255,0.55) 0%, rgba(255,255,255,0.30) 10%, rgba(255,255,255,0.00) 40%),
-        radial-gradient(140% 140% at 50% 50%, var(--glass-specular) 0%, rgba(255,255,255,0.30) 22%, rgba(255,255,255,0.06) 48%, rgba(255,255,255,0.00) 62%),
-        linear-gradient(180deg, var(--glass-bg) 0%, var(--glass-bg-2) 100%);
-    -webkit-backdrop-filter: saturate(140%) blur(var(--glass-blur));
-    backdrop-filter: saturate(140%) blur(var(--glass-blur));
+        linear-gradient(180deg, var(--accent-a1) 0%, var(--accent-a2) 100%);
     box-shadow:
-        inset 0 0 0 0.5px var(--glass-border-inner),
-        0 0 0 1px var(--glass-border-outer),
+        inset 0 0 0 0.5px rgba(255,255,255,0.26),
+        0 0 0 1px rgba(255,255,255,0.48),
         0 4px 12px var(--glass-shadow);
 }
 
@@ -780,6 +814,9 @@ a.btn-liquid {
 button.btn-liquid:hover,
 a.btn-liquid:hover {
     transform: none;
+    background:
+        linear-gradient(180deg, rgba(255,255,255,0.46) 0%, rgba(255,255,255,0.22) 14%, rgba(255,255,255,0.00) 44%),
+        linear-gradient(180deg, var(--accent-a1) 0%, var(--accent-a2) 100%);
 }
 
 .entry-form button.btn-liquid:active,
@@ -788,4 +825,146 @@ a.btn-liquid:hover {
 button.btn-liquid:active,
 a.btn-liquid:active {
     transform: scale(0.99);
+}
+
+/* Modal buttons: match delete idle style (blue variant), and keep hover same */
+.modal-content .btn-liquid,
+.modal-actions .btn-liquid,
+.entry-form .btn-liquid,
+.password-form .btn-liquid,
+.modal-content .btn-liquid.clear,
+.modal-actions .btn-liquid.clear,
+.entry-form .btn-liquid.clear,
+.password-form .btn-liquid.clear,
+.modal-content .btn-like.btn-liquid.clear {
+    background: transparent;
+    box-shadow: none;
+    border: 1px solid transparent;
+}
+.modal-content .btn-liquid:hover,
+.modal-actions .btn-liquid:hover,
+.entry-form .btn-liquid:hover,
+.password-form .btn-liquid:hover,
+.modal-content .btn-liquid.clear:hover,
+.modal-actions .btn-liquid.clear:hover,
+.entry-form .btn-liquid.clear:hover,
+.password-form .btn-liquid.clear:hover,
+.modal-content .btn-like.btn-liquid.clear:hover {
+    background:
+        linear-gradient(180deg, rgba(255,255,255,0.46) 0%, rgba(255,255,255,0.22) 14%, rgba(255,255,255,0.00) 44%),
+        linear-gradient(180deg, var(--accent-a1) 0%, var(--accent-a2) 100%);
+    box-shadow:
+        inset 0 0 0 0.5px rgba(255,255,255,0.26),
+        inset 0 10px 24px rgba(255,255,255,0.12),
+        0 12px 24px var(--glass-shadow);
+}
+
+/* Modal buttons: slightly more translucent at rest (idle) */
+/* Removed modal-specific .btn-liquid overrides to ensure exact match with header */
+a.btn-liquid.clear,
+button.btn-liquid.clear,
+.entry-form button.btn-liquid.clear,
+.modal-actions button.btn-liquid.clear,
+.share-box .btn-like.btn-liquid.clear {
+    background:
+        linear-gradient(180deg, var(--accent-a1) 0%, var(--accent-a2) 100%);
+    box-shadow:
+        inset 0 0 0 0.5px rgba(255,255,255,0.18),
+        0 4px 12px var(--glass-shadow);
+}
+
+a.btn-liquid.clear:hover,
+button.btn-liquid.clear:hover,
+.entry-form button.btn-liquid.clear:hover,
+.modal-actions button.btn-liquid.clear:hover,
+.share-box .btn-like.btn-liquid.clear:hover {
+    background:
+        linear-gradient(180deg, var(--accent-a1) 0%, var(--accent-a2) 100%);
+    box-shadow:
+        inset 0 0 0 0.5px rgba(255,255,255,0.20),
+        0 12px 24px var(--glass-shadow);
+}
+
+/* Global: idle fully translucent, hover shows liquid glass */
+.btn-liquid,
+button.btn-liquid,
+.entry-form button.btn-liquid,
+.modal-actions button.btn-liquid,
+.share-box .btn-like.btn-liquid,
+a.btn-liquid,
+.btn-liquid.clear,
+button.btn-liquid.clear,
+.entry-form button.btn-liquid.clear,
+.modal-actions button.btn-liquid.clear,
+.share-box .btn-like.btn-liquid.clear,
+a.btn-liquid.clear {
+    background: transparent;
+    /* keep subtle inner + outer ring even when idle */
+    box-shadow:
+        inset 0 0 0 0.5px rgba(255,255,255,0.18),
+        0 0 0 1px rgba(255,255,255,0.38);
+    border-color: transparent; /* ring provided by box-shadow for crisp edges */
+}
+
+.btn-liquid:hover,
+button.btn-liquid:hover,
+.entry-form button.btn-liquid:hover,
+.modal-actions button.btn-liquid:hover,
+.share-box .btn-like.btn-liquid:hover,
+a.btn-liquid:hover,
+.btn-liquid.clear:hover,
+button.btn-liquid.clear:hover,
+.entry-form button.btn-liquid.clear:hover,
+.modal-actions button.btn-liquid.clear:hover,
+.share-box .btn-like.btn-liquid.clear:hover,
+a.btn-liquid.clear:hover {
+    background:
+        linear-gradient(180deg, rgba(255,255,255,0.46) 0%, rgba(255,255,255,0.22) 14%, rgba(255,255,255,0.00) 44%),
+        linear-gradient(180deg, var(--accent-a1) 0%, var(--accent-a2) 100%);
+    box-shadow:
+        inset 0 0 0 0.5px rgba(255,255,255,0.26),
+        inset 0 10px 24px rgba(255,255,255,0.12),
+        0 0 0 1px rgba(255,255,255,0.48),
+        0 12px 24px var(--glass-shadow);
+}
+
+.btn-liquid:active,
+button.btn-liquid:active,
+.entry-form button.btn-liquid:active,
+.modal-actions button.btn-liquid:active,
+.share-box .btn-like.btn-liquid:active,
+a.btn-liquid:active,
+.btn-liquid.clear:active,
+button.btn-liquid.clear:active,
+.entry-form button.btn-liquid.clear:active,
+.modal-actions button.btn-liquid.clear:active,
+.share-box .btn-like.btn-liquid.clear:active,
+a.btn-liquid.clear:active {
+    transform: scale(0.99);
+    box-shadow:
+        inset 0 0 0 0.5px rgba(255,255,255,0.20),
+        0 6px 16px var(--glass-shadow);
+}
+
+/* Light mode tuning: less silver gloss, stronger blue */
+body:not(.dark-mode) .btn-liquid:hover,
+body:not(.dark-mode) button.btn-liquid:hover,
+body:not(.dark-mode) .entry-form button.btn-liquid:hover,
+body:not(.dark-mode) .modal-actions button.btn-liquid:hover,
+body:not(.dark-mode) .share-box .btn-like.btn-liquid:hover,
+body:not(.dark-mode) a.btn-liquid:hover,
+body:not(.dark-mode) .btn-liquid.clear:hover,
+body:not(.dark-mode) button.btn-liquid.clear:hover,
+body:not(.dark-mode) .entry-form button.btn-liquid.clear:hover,
+body:not(.dark-mode) .modal-actions button.btn-liquid.clear:hover,
+body:not(.dark-mode) .share-box .btn-like.btn-liquid.clear:hover,
+body:not(.dark-mode) a.btn-liquid.clear:hover {
+    background:
+        linear-gradient(180deg, rgba(255,255,255,0.30) 0%, rgba(255,255,255,0.12) 14%, rgba(255,255,255,0.00) 44%),
+        linear-gradient(180deg, rgba(79,143,255,0.20) 0%, rgba(79,143,255,0.12) 100%);
+    box-shadow:
+        inset 0 0 0 0.5px rgba(255,255,255,0.26),
+        inset 0 10px 24px rgba(255,255,255,0.10),
+        0 0 0 1px rgba(160,200,255,0.50),
+        0 12px 24px var(--glass-shadow);
 }
