@@ -388,6 +388,10 @@ body.dark-mode .modal-content {
     white-space: pre-wrap;
     word-wrap: break-word;
 }
+.full-entry-title {
+    font-weight: 700;
+    margin-bottom: 8px;
+}
 
 .modal-actions {
     display: flex;

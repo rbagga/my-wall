@@ -434,6 +434,13 @@ class WallApp {
         const isObj = entry && typeof entry === 'object';
         const text = isObj ? entry.text : String(entry || '');
         const container = document.createElement('div');
+        // Optional title heading
+        if (isObj && entry.title && String(entry.title).trim()) {
+            const h = document.createElement('h3');
+            h.className = 'full-entry-title';
+            h.textContent = String(entry.title).trim();
+            container.appendChild(h);
+        }
         const content = document.createElement('div');
         content.className = 'full-entry';
         content.innerHTML = this.escapeHtml(text);
@@ -541,16 +548,40 @@ class WallApp {
                     try {
                         if (this.currentWall === 'friend') {
                             await this.removeFriendEntry(entry.id);
+                            // Optimistic local removal
+                            if (Array.isArray(this.entriesCache.friend)) {
+                                this.entriesCache.friend = this.entriesCache.friend.filter(e => e.id !== entry.id);
+                                if (this.currentWall === 'friend') {
+                                    this.entries = this.entriesCache.friend;
+                                    this.renderEntries();
+                                }
+                            }
                         } else if (this.currentWall === 'tech') {
                             await this.removeTechNote(entry.id);
+                            if (Array.isArray(this.entriesCache.tech)) {
+                                this.entriesCache.tech = this.entriesCache.tech.filter(e => e.id !== entry.id);
+                                if (this.currentWall === 'tech') {
+                                    this.entries = this.entriesCache.tech;
+                                    this.renderEntries();
+                                }
+                            }
                         } else {
                             await this.removeEntry(entry.id);
+                            if (Array.isArray(this.entriesCache.rishu)) {
+                                this.entriesCache.rishu = this.entriesCache.rishu.filter(e => e.id !== entry.id);
+                                if (this.currentWall === 'rishu') {
+                                    this.entries = this.entriesCache.rishu;
+                                    this.renderEntries();
+                                }
+                            }
+                            if (Array.isArray(this.entriesCache.drafts)) {
+                                this.entriesCache.drafts = this.entriesCache.drafts.filter(e => e.id !== entry.id);
+                                if (this.currentWall === 'drafts') {
+                                    this.entries = this.entriesCache.drafts;
+                                    this.renderEntries();
+                                }
+                            }
                         }
-                        this.entriesCache.rishu = null;
-                        this.entriesCache.drafts = null;
-                        this.entriesCache.friend = null;
-                        this.entriesCache.tech = null;
-                        await this.loadEntries();
                         this.closeModal();
                     } catch (e) {
                         alert('Failed to delete entry.');
@@ -678,10 +709,14 @@ class WallApp {
                     return;
                 }
                 try {
-                    await this.saveEntry(text, this.tempPassword, 'draft', title);
-                    // refresh drafts cache if needed
-                    this.entriesCache.drafts = null;
-                    if (this.currentWall === 'drafts') await this.loadEntries();
+                    const created = await this.saveEntry(text, this.tempPassword, 'draft', title);
+                    // Optimistically update drafts cache/UI
+                    const next = [created, ...(Array.isArray(this.entriesCache.drafts) ? this.entriesCache.drafts : [])];
+                    this.entriesCache.drafts = next;
+                    if (this.currentWall === 'drafts') {
+                        this.entries = next;
+                        this.renderEntries();
+                    }
                     this.closeModal();
                 } catch (error) {
                     if (String(error && error.message) === 'Invalid password') {

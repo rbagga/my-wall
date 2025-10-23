@@ -70,14 +70,15 @@ function randomCode(len = 6) {
 async function entriesHandler(req, res, parts) {
   if (req.method === 'GET') {
     try {
-      let query = supabase
+      // Include entries where visibility is 'public' or NULL (back-compat)
+      const q = await supabase
         .from('wall_entries')
         .select('*')
-        .eq('visibility', 'public')
+        .or('visibility.is.null,visibility.eq.public')
         .order('is_pinned', { ascending: false })
         .order('pin_order', { ascending: true, nullsFirst: false })
         .order('timestamp', { ascending: false });
-      let { data, error } = await query;
+      let { data, error } = q;
       if (error) {
         const fb = await supabase
           .from('wall_entries')
