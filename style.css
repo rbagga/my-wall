@@ -266,6 +266,26 @@ body.dark-mode .entry-name {
     line-height: 1;
 }
 
+/* Title + divider styling */
+.entry-title {
+    font-weight: 700;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 40%;
+}
+.vdiv {
+    display: inline-block;
+    width: 1px;
+    height: 14px;
+    background: #ccc;
+    margin: 0 8px;
+    flex-shrink: 0;
+}
+body.dark-mode .vdiv {
+    background: #555;
+}
+
 .add-button {
     width: 100%;
     padding: 12px;

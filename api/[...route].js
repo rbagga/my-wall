@@ -27,9 +27,10 @@ function setCORS(res) {
 
 function parsePath(req) {
   const url = new URL(req.url, 'http://local');
-  const path = url.pathname.replace(/^\/?api\/?/, ''); // strip leading /api/
-  const parts = path.split('/').filter(Boolean);
-  return { parts, query: Object.fromEntries(url.searchParams.entries()) };
+  const query = Object.fromEntries(url.searchParams.entries());
+  const raw = url.pathname.replace(/^\/?api\/?/, '');
+  const parts = String(raw || '').split('/').filter(Boolean);
+  return { parts, query };
 }
 
 function escapeHtml(s = '') {
@@ -94,24 +95,26 @@ async function entriesHandler(req, res, parts) {
   }
   if (req.method === 'POST') {
     try {
-      const { text, password, visibility } = req.body || {};
+      const { text, password, visibility, title } = req.body || {};
       if (password !== process.env.WALL_PASSWORD) {
         return res.status(401).json({ error: 'Invalid password' });
       }
       const vis = visibility === 'draft' ? 'draft' : 'public';
-      const row = { text, timestamp: new Date().toISOString(), visibility: vis };
+      const cleanTitle = (typeof title === 'string' && title.trim().length > 0 && title.trim() !== '(optional)') ? title.trim() : null;
+      const row = { text, timestamp: new Date().toISOString(), visibility: vis, title: cleanTitle };
       let ins = await supabase.from('wall_entries').insert([row]).select();
       if (ins.error) {
-        if (vis === 'public') {
-          const fb = await supabase
-            .from('wall_entries')
-            .insert([{ text, timestamp: new Date().toISOString() }])
-            .select();
-          if (fb.error) throw fb.error;
-          ins = fb;
-        } else {
+        if (vis !== 'public') {
+          // Drafts depend on new schema; surface explicit guidance
           throw new Error('Drafts require DB migration. Please run supabase db push.');
         }
+        // Fallback: insert minimal columns compatible with older schema
+        const fb = await supabase
+          .from('wall_entries')
+          .insert([{ text, timestamp: new Date().toISOString() }])
+          .select();
+        if (fb.error) throw ins.error || fb.error;
+        ins = fb;
       }
       return res.status(200).json({ data: ins.data[0] });
     } catch (error) {
@@ -124,23 +127,24 @@ async function entriesHandler(req, res, parts) {
 async function updateEntryHandler(req, res) {
   if (req.method !== 'POST' && req.method !== 'PATCH') return res.status(405).json({ error: 'Method not allowed' });
   try {
-    const { id, text, visibility, password } = req.body || {};
+    const { id, text, visibility, password, title } = req.body || {};
     if (!id) return res.status(400).json({ error: 'Missing id' });
     if (password !== process.env.WALL_PASSWORD) return res.status(401).json({ error: 'Invalid password' });
 
     const update = {};
     if (typeof text === 'string') update.text = text;
     if (visibility === 'public' || visibility === 'draft') update.visibility = visibility;
+    if (typeof title === 'string') {
+      const cleanTitle = title.trim();
+      update.title = cleanTitle && cleanTitle !== '(optional)' ? cleanTitle : null;
+    }
 
     let { data, error } = await supabase.from('wall_entries').update(update).eq('id', id).select();
     if (error) {
-      if (!('visibility' in update)) {
-        const fb = await supabase.from('wall_entries').update({ text: update.text }).eq('id', id).select();
-        if (fb.error) throw fb.error;
-        data = fb.data;
-      } else {
-        throw error;
-      }
+      // Fallback: update only text for older schemas
+      const fb = await supabase.from('wall_entries').update({ text: update.text }).eq('id', id).select();
+      if (fb.error) throw error;
+      data = fb.data;
     }
     return res.status(200).json({ data: (data && data[0]) || null });
   } catch (error) {
@@ -221,7 +225,7 @@ async function friendEntriesHandler(req, res) {
   }
   if (req.method === 'POST') {
     try {
-      const { text, name } = req.body || {};
+      const { text, name, title } = req.body || {};
       if (!name || !text) return res.status(400).json({ error: 'Name and text are required' });
       if (openai) {
         try {
@@ -236,10 +240,19 @@ async function friendEntriesHandler(req, res) {
           // ignore moderation failures
         }
       }
-      const { data, error } = await supabase
+      const cleanTitle = (typeof title === 'string' && title.trim().length > 0 && title.trim() !== '(optional)') ? title.trim() : null;
+      let { data, error } = await supabase
         .from('friend_entries')
-        .insert([{ name, text, timestamp: new Date().toISOString() }])
+        .insert([{ name, text, title: cleanTitle, timestamp: new Date().toISOString() }])
         .select();
+      if (error) {
+        const fb = await supabase
+          .from('friend_entries')
+          .insert([{ name, text, timestamp: new Date().toISOString() }])
+          .select();
+        if (fb.error) throw error;
+        data = fb.data;
+      }
       if (error) throw error;
       return res.status(200).json({ data: data[0] });
     } catch (error) {
@@ -321,15 +334,18 @@ async function techNotesHandler(req, res) {
   }
   if (req.method === 'POST') {
     try {
-      const { text, password } = req.body || {};
+      const { text, password, title } = req.body || {};
       if (!text) return res.status(400).json({ error: 'Text is required' });
       if (password !== process.env.WALL_PASSWORD) return res.status(401).json({ error: 'Invalid password' });
-      const ins = await supabase.from('tech_notes').insert([{ text }]).select();
+      const cleanTitle = (typeof title === 'string' && title.trim().length > 0 && title.trim() !== '(optional)') ? title.trim() : null;
+      let ins = await supabase.from('tech_notes').insert([{ text, title: cleanTitle }]).select();
       if (ins.error) {
         if (String(ins.error.code) === '42P01' || /tech_notes/i.test(String(ins.error.message || ''))) {
           return res.status(400).json({ error: 'Tech notes require DB migration. Please run supabase db push.' });
         }
-        throw ins.error;
+        const fb = await supabase.from('tech_notes').insert([{ text }]).select();
+        if (fb.error) throw ins.error || fb.error;
+        ins = fb;
       }
       return res.status(200).json({ data: ins.data[0] });
     } catch (error) {
@@ -627,4 +643,3 @@ module.exports = async function handler(req, res) {
     return res.status(500).json({ error: error.message });
   }
 }
-

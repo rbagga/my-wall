@@ -148,7 +148,7 @@ class WallApp {
         }
     }
 
-    async saveEntry(text, password, visibility = 'public') {
+    async saveEntry(text, password, visibility = 'public', title = null) {
         try {
             const response = await fetch('/api/entries', {
                 method: 'POST',
@@ -158,7 +158,8 @@ class WallApp {
                 body: JSON.stringify({
                     text: text,
                     password: password,
-                    visibility
+                    visibility,
+                    title: (typeof title === 'string' && title.trim() && title.trim() !== '(optional)') ? title.trim() : undefined
                 })
             });
 
@@ -341,6 +342,19 @@ class WallApp {
                 entryDiv.appendChild(nameSpan);
             } else {
                 entryDiv.appendChild(timestampSpan);
+            }
+
+            // Title + divider + body text
+            const hasTitle = typeof entry.title === 'string' && entry.title.trim().length > 0;
+            if (hasTitle) {
+                const titleSpan = document.createElement('span');
+                titleSpan.className = 'entry-title';
+                titleSpan.textContent = entry.title.trim();
+                entryDiv.appendChild(titleSpan);
+
+                const vdiv = document.createElement('span');
+                vdiv.className = 'vdiv';
+                entryDiv.appendChild(vdiv);
             }
 
             const textSpan = document.createElement('span');
@@ -635,6 +649,7 @@ class WallApp {
         form.className = 'entry-form';
         form.innerHTML = `
             <h3>New Entry</h3>
+            <input type="text" id="entryTitle" value="(optional)">
             <textarea id="entryText" placeholder="Write your entry..." required></textarea>
             <div style="display:flex; gap:8px;">
                 <button type="submit" id="publishBtn">Publish</button>
@@ -645,20 +660,25 @@ class WallApp {
         this.dom.modalBody.innerHTML = '';
         this.dom.modalBody.appendChild(form);
 
+        const titleInput = form.querySelector('#entryTitle');
+        this.attachOptionalTitleBehavior(titleInput);
+
         form.addEventListener('submit', (e) => this.handleEntrySubmit(e));
         const saveDraftBtn = form.querySelector('#saveDraftBtn');
         if (saveDraftBtn) {
             saveDraftBtn.addEventListener('click', async (e) => {
                 e.preventDefault();
                 const textarea = form.querySelector('#entryText');
+                const titleEl = form.querySelector('#entryTitle');
                 const text = (textarea.value || '').trim();
+                const title = (titleEl && titleEl.value) ? titleEl.value : '';
                 if (!text) {
                     textarea.value = '';
                     textarea.focus();
                     return;
                 }
                 try {
-                    await this.saveEntry(text, this.tempPassword, 'draft');
+                    await this.saveEntry(text, this.tempPassword, 'draft', title);
                     // refresh drafts cache if needed
                     this.entriesCache.drafts = null;
                     if (this.currentWall === 'drafts') await this.loadEntries();
@@ -677,9 +697,9 @@ class WallApp {
 
         this.openModal();
 
-        // Focus textarea
+        // Focus title first
         setTimeout(() => {
-            document.getElementById('entryText')?.focus();
+            document.getElementById('entryTitle')?.focus();
         }, 100);
     }
 
@@ -689,12 +709,16 @@ class WallApp {
         form.innerHTML = `
             <h3>New Entry</h3>
             <input type="text" id="entryName" placeholder="Your name" required>
+            <input type="text" id="entryTitle" value="(optional)">
             <textarea id="entryText" placeholder="Write your entry..." required></textarea>
             <button type="submit">Add to Wall</button>
         `;
 
         this.dom.modalBody.innerHTML = '';
         this.dom.modalBody.appendChild(form);
+
+        const titleInput = form.querySelector('#entryTitle');
+        this.attachOptionalTitleBehavior(titleInput);
 
         form.addEventListener('submit', (e) => this.handleFriendEntrySubmit(e));
 
@@ -711,6 +735,7 @@ class WallApp {
         form.className = 'entry-form';
         form.innerHTML = `
             <h3>Edit Entry</h3>
+            <input type="text" id="entryTitle" value="${(entry && entry.title) ? String(entry.title).replace(/&/g,'&amp;').replace(/"/g,'&quot;') : '(optional)'}">
             <textarea id="entryText" placeholder="Write your entry..." required></textarea>
             <div style="display:flex; gap:8px;">
                 <button type="button" id="publishBtn">Publish</button>
@@ -723,16 +748,19 @@ class WallApp {
         this.dom.modalBody.appendChild(form);
 
         const textarea = form.querySelector('#entryText');
+        const titleInput = form.querySelector('#entryTitle');
         textarea.value = entry.text || '';
+        this.attachOptionalTitleBehavior(titleInput);
 
         const publishBtn = form.querySelector('#publishBtn');
         const saveDraftBtn = form.querySelector('#saveDraftBtn');
 
         const doUpdate = async (vis) => {
             const text = (textarea.value || '').trim();
+            const title = (titleInput && titleInput.value) ? titleInput.value : '';
             if (!text) { textarea.focus(); return; }
             try {
-                await this.updateEntry(entry.id, text, vis);
+                await this.updateEntry(entry.id, text, vis, title);
                 this.entriesCache.rishu = null;
                 this.entriesCache.drafts = null;
                 await this.loadEntries();
@@ -786,14 +814,14 @@ class WallApp {
         });
 
         this.openModal();
-        setTimeout(() => textarea?.focus(), 100);
+        setTimeout(() => titleInput?.focus(), 100);
     }
 
-    async updateEntry(id, text, visibility) {
+    async updateEntry(id, text, visibility, title = null) {
         const response = await fetch('/api/update-entry', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ id, text, visibility, password: this.tempPassword })
+            body: JSON.stringify({ id, text, visibility, title: (typeof title === 'string' && title.trim() && title.trim() !== '(optional)') ? title.trim() : undefined, password: this.tempPassword })
         });
         const result = await response.json().catch(() => ({}));
         if (!response.ok) throw new Error(result.error || 'Error');
@@ -827,26 +855,31 @@ class WallApp {
         form.className = 'entry-form';
         form.innerHTML = `
             <h3>New Tech Note</h3>
+            <input type="text" id="entryTitle" value="(optional)">
             <textarea id=\"entryText\" placeholder=\"Write your note...\" required></textarea>
-            <button type=\"submit\">Publish</button>
+            <button type=\"submit\" id=\"techSubmitBtn\">Save</button>
         `;
 
         this.dom.modalBody.innerHTML = '';
         this.dom.modalBody.appendChild(form);
 
+        const titleInput = form.querySelector('#entryTitle');
+        this.attachOptionalTitleBehavior(titleInput);
+
         form.addEventListener('submit', async (e) => {
             e.preventDefault();
-            if (form.classList.contains('is-submitting')) return;
-            const textarea = form.querySelector('#entryText');
-            const submitBtn = form.querySelector('button[type="submit"]');
-            const text = (textarea.value || '').trim();
-            if (!text) { textarea.value = ''; textarea.focus(); return; }
-            textarea.value = '';
+            const formEl = e.target;
+            if (formEl.classList.contains('is-submitting')) return;
+            formEl.classList.add('is-submitting');
+            const submitBtn = formEl.querySelector('#techSubmitBtn');
             if (submitBtn) submitBtn.disabled = true;
-            form.classList.add('is-submitting');
             try {
-                const created = await this.saveTechNote(text, this.tempPassword);
-                // Optimistically add to UI/cache
+                const textarea = formEl.querySelector('#entryText');
+                const titleEl = formEl.querySelector('#entryTitle');
+                const text = (textarea.value || '').trim();
+                const title = (titleEl && titleEl.value) ? titleEl.value : '';
+                if (!text) { textarea.focus(); return; }
+                const created = await this.saveTechNote(text, this.tempPassword, title);
                 const next = [created, ...(Array.isArray(this.entriesCache.tech) ? this.entriesCache.tech : [])];
                 this.entriesCache.tech = next;
                 if (this.currentWall === 'tech') {
@@ -867,23 +900,39 @@ class WallApp {
                 }
             } finally {
                 if (submitBtn) submitBtn.disabled = false;
-                form.classList.remove('is-submitting');
+                formEl.classList.remove('is-submitting');
             }
         });
 
         this.openModal();
-        setTimeout(() => document.getElementById('entryText')?.focus(), 100);
+        setTimeout(() => document.getElementById('entryTitle')?.focus(), 100);
     }
 
-    async saveTechNote(text, password) {
+    async saveTechNote(text, password, title = null) {
         const response = await fetch('/api/tech-notes', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ text, password })
+            body: JSON.stringify({ text, password, title: (typeof title === 'string' && title.trim() && title.trim() !== '(optional)') ? title.trim() : undefined })
         });
         const result = await response.json().catch(() => ({}));
         if (!response.ok) throw new Error(result.error || 'Error');
         return result.data;
+    }
+
+    // Helper: optional title input UX
+    attachOptionalTitleBehavior(input) {
+        if (!input) return;
+        const OPTIONAL = '(optional)';
+        if (!input.value || !input.value.trim()) input.value = OPTIONAL;
+        input.addEventListener('focus', () => {
+            if (input.value.trim() === OPTIONAL) input.value = '';
+        });
+        input.addEventListener('input', () => {
+            if (input.value.trim() === OPTIONAL) input.value = '';
+        });
+        input.addEventListener('blur', () => {
+            if (!input.value.trim()) input.value = OPTIONAL;
+        });
     }
 
     async removeTechNote(id) {
@@ -991,8 +1040,10 @@ class WallApp {
         if (form.classList.contains('is-submitting')) return;
 
         const textarea = form.querySelector('#entryText');
+        const titleEl = form.querySelector('#entryTitle');
         const submitBtn = form.querySelector('button[type="submit"]');
         const text = textarea.value.trim();
+        const title = titleEl && titleEl.value ? titleEl.value : '';
 
         // Prevent empty/whitespace-only submissions
         if (!text) {
@@ -1007,7 +1058,7 @@ class WallApp {
         form.classList.add('is-submitting');
 
         try {
-            const created = await this.saveEntry(text, this.tempPassword, 'public');
+            const created = await this.saveEntry(text, this.tempPassword, 'public', title);
             // Optimistically add to UI/cache
             const next = [created, ...(Array.isArray(this.entriesCache.rishu) ? this.entriesCache.rishu : [])];
             this.entriesCache.rishu = next;
@@ -1039,10 +1090,12 @@ class WallApp {
 
         const nameInput = form.querySelector('#entryName');
         const textarea = form.querySelector('#entryText');
+        const titleEl = form.querySelector('#entryTitle');
         const submitBtn = form.querySelector('button[type="submit"]');
 
         const name = nameInput.value.trim();
         const text = textarea.value.trim();
+        const title = titleEl && titleEl.value ? titleEl.value : '';
 
         // Prevent empty/whitespace-only submissions
         if (!name || !text) {
@@ -1054,11 +1107,12 @@ class WallApp {
         // Immediately clear and prevent double submit
         nameInput.value = '';
         textarea.value = '';
+        if (titleEl) titleEl.value = '(optional)';
         if (submitBtn) submitBtn.disabled = true;
         form.classList.add('is-submitting');
 
         try {
-            const created = await this.saveFriendEntry(text, name);
+            const created = await this.saveFriendEntry(text, name, title);
             // Optimistically add to UI/cache
             const next = [created, ...(Array.isArray(this.entriesCache.friend) ? this.entriesCache.friend : [])];
             this.entriesCache.friend = next;
@@ -1084,7 +1138,7 @@ class WallApp {
         }
     }
 
-    async saveFriendEntry(text, name) {
+    async saveFriendEntry(text, name, title = null) {
         try {
             const response = await fetch('/api/friend-entries', {
                 method: 'POST',
@@ -1093,7 +1147,8 @@ class WallApp {
                 },
                 body: JSON.stringify({
                     text: text,
-                    name: name
+                    name: name,
+                    title: (typeof title === 'string' && title.trim() && title.trim() !== '(optional)') ? title.trim() : undefined
                 })
             });
 

@@ -3,4 +3,3 @@
     { "source": "/s/:code", "destination": "/api/s?c=:code" }
   ]
 }
-
