@@ -474,7 +474,7 @@ class WallApp {
             if (this.isAuthenticated && this.currentWall === 'rishu') {
                 const editBtn = document.createElement('button');
                 editBtn.type = 'button';
-                editBtn.className = 'action-edit-btn';
+                editBtn.className = 'action-edit-btn btn-liquid';
                 editBtn.innerHTML = `
                     <svg viewBox=\"0 0 24 24\" aria-hidden=\"true\" style=\"width:16px;height:16px;vertical-align:middle;margin-right:6px;\">
                       <path d=\"M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25z\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.5\" stroke-linecap=\"round\" stroke-linejoin=\"round\"/>
@@ -608,7 +608,7 @@ class WallApp {
             <h3>Enter Password</h3>
             <input type="password" id="passwordInput" placeholder="Password" required autocomplete="current-password">
             <div id="passwordError" class="error"></div>
-            <button type="submit">Submit</button>
+            <button type="submit" class="btn-liquid">Submit</button>
         `;
 
         this.dom.modalBody.innerHTML = '';
@@ -683,8 +683,8 @@ class WallApp {
             <input type="text" id="entryTitle" placeholder="Title (optional)">
             <textarea id="entryText" placeholder="Write your entry..." required></textarea>
             <div style="display:flex; gap:8px;">
-                <button type="submit" id="publishBtn">Publish</button>
-                <button type="button" id="saveDraftBtn">Save Draft</button>
+                <button type="submit" id="publishBtn" class="btn-liquid">Publish</button>
+                <button type="button" id="saveDraftBtn" class="btn-liquid">Save Draft</button>
             </div>
         `;
 
@@ -745,7 +745,7 @@ class WallApp {
             <input type="text" id="entryName" placeholder="Your name" required>
             <input type="text" id="entryTitle" placeholder="Title (optional)">
             <textarea id="entryText" placeholder="Write your entry..." required></textarea>
-            <button type="submit">Add to Wall</button>
+            <button type="submit" class="btn-liquid">Add to Wall</button>
         `;
 
         this.dom.modalBody.innerHTML = '';
@@ -771,8 +771,8 @@ class WallApp {
             <input type="text" id="entryTitle" placeholder="Title (optional)" value="${(entry && entry.title) ? String(entry.title).replace(/&/g,'&amp;').replace(/"/g,'&quot;') : ''}">
             <textarea id="entryText" placeholder="Write your entry..." required></textarea>
             <div style="display:flex; gap:8px;">
-                <button type="button" id="publishBtn">Publish</button>
-                <button type="button" id="saveDraftBtn">Save Draft</button>
+                <button type="button" id="publishBtn" class="btn-liquid">Publish</button>
+                <button type="button" id="saveDraftBtn" class="btn-liquid">Save Draft</button>
                 <button type="button" id="deleteBtn" class="danger" style="margin-left:auto;">Delete</button>
             </div>
         `;
@@ -890,7 +890,7 @@ class WallApp {
             <h3>New Tech Note</h3>
             <input type="text" id="entryTitle" placeholder="Title (optional)">
             <textarea id=\"entryText\" placeholder=\"Write your note...\" required></textarea>
-            <button type=\"submit\" id=\"techSubmitBtn\">Save</button>
+            <button type=\"submit\" id=\"techSubmitBtn\" class=\"btn-liquid\">Save</button>
         `;
 
         this.dom.modalBody.innerHTML = '';
@@ -1031,8 +1031,8 @@ class WallApp {
             <h3>Share Link</h3>
             <input id="shareLinkInput" type="text" readonly value="${this.escapeHtml(shortUrl)}" />
             <div style="display:flex; gap:8px;">
-                <button type="button" id="copyShareBtn">Copy</button>
-                <a id="openShareBtn" class="btn-like" href="${this.escapeHtml(shortUrl)}" target="_blank" rel="noopener noreferrer">Open</a>
+                <button type="button" id="copyShareBtn" class="btn-liquid">Copy</button>
+                <a id="openShareBtn" class="btn-like btn-liquid" href="${this.escapeHtml(shortUrl)}" target="_blank" rel="noopener noreferrer">Open</a>
             </div>
         `;
         this.dom.modalBody.innerHTML = '';
@@ -1072,8 +1072,8 @@ class WallApp {
             <h3>Share Link</h3>
             <div class="error">${this.escapeHtml(message)}</div>
             <div style="display:flex; gap:8px;">
-                <button type="button" id="retryShareBtn">Try Again</button>
-                <button type="button" id="closeShareBtn">Close</button>
+                <button type="button" id="retryShareBtn" class="btn-liquid">Try Again</button>
+                <button type="button" id="closeShareBtn" class="btn-liquid">Close</button>
             </div>
         `;
         this.dom.modalBody.innerHTML = '';
@@ -1222,10 +1222,13 @@ class WallApp {
             })
             .catch((error) => {
                 const msg = String(error && error.message || '');
-                this.entriesCache.friend = (this.entriesCache.friend || []).filter(e => e.id !== tempId);
-                if (this.currentWall === 'friend') {
-                    this.entries = this.entriesCache.friend;
-                    this.renderEntries();
+                // Roll back only if not 404 (already deleted)
+                if (!(error && error.status === 404)) {
+                    this.entriesCache.friend = (this.entriesCache.friend || []).filter(e => e.id !== tempId);
+                    if (this.currentWall === 'friend') {
+                        this.entries = this.entriesCache.friend;
+                        this.renderEntries();
+                    }
                 }
                 if (error && error.analysis) {
                     // Build a message with category scores vs thresholds
@@ -1243,6 +1246,10 @@ class WallApp {
                     });
                     const detail = parts.length ? `Blocked by moderation — ${parts.join(' | ')}` : 'Blocked by moderation.';
                     alert(detail);
+                } else if (error && error.status === 401) {
+                    alert('Invalid password. Please try again.');
+                } else if (error && error.status === 404) {
+                    // Already deleted; keep UI state as-is
                 } else if (/inappropriate/i.test(msg)) {
                     alert('Your entry was blocked due to inappropriate language (in the message or name). Please edit and try again.');
                 } else {
