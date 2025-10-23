@@ -1227,7 +1227,23 @@ class WallApp {
                     this.entries = this.entriesCache.friend;
                     this.renderEntries();
                 }
-                if (/inappropriate/i.test(msg)) {
+                if (error && error.analysis) {
+                    // Build a message with category scores vs thresholds
+                    const th = error.thresholds || {};
+                    const parts = [];
+                    error.analysis.forEach((a) => {
+                        if (!a) return;
+                        const rows = [];
+                        (a.tripped || []).forEach((k) => {
+                            const sc = (a.scores && typeof a.scores[k] === 'number') ? a.scores[k] : 0;
+                            const t = typeof th[k] === 'number' ? th[k] : 0;
+                            rows.push(`${k}: score ${sc.toFixed(3)} > threshold ${t.toFixed(3)}`);
+                        });
+                        if (rows.length) parts.push(`${a.input || 'text'} — ${rows.join(', ')}`);
+                    });
+                    const detail = parts.length ? `Blocked by moderation — ${parts.join(' | ')}` : 'Blocked by moderation.';
+                    alert(detail);
+                } else if (/inappropriate/i.test(msg)) {
                     alert('Your entry was blocked due to inappropriate language (in the message or name). Please edit and try again.');
                 } else {
                     alert('Error saving entry. Please try again.');
@@ -1253,9 +1269,14 @@ class WallApp {
                 })
             });
 
-            const result = await response.json();
+            const result = await response.json().catch(() => ({}));
 
-            if (!response.ok) throw new Error(result.error);
+            if (!response.ok) {
+                const err = new Error(result && result.error || 'Error');
+                if (result && result.analysis) err.analysis = result.analysis;
+                if (result && result.thresholds) err.thresholds = result.thresholds;
+                throw err;
+            }
 
             return result.data;
         } catch (error) {

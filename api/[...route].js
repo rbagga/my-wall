@@ -273,32 +273,38 @@ async function friendEntriesHandler(req, res) {
       if (!name || !text) return res.status(400).json({ error: 'Name and text are required' });
       if (openai) {
         try {
-          const moderation = await openai.moderations.create({ input: [name, text] });
-          const strict = { sexual: 0.01, harassment: 0.15, hate: 0.01, violence: 0.05, 'self-harm': 0.01 };
-          for (const result of moderation.results) {
+          const moderation = await openai.moderations.create({ model: 'omni-moderation-latest', input: [name, text] });
+          const strict = { sexual: 0.03, harassment: 0.15, hate: 0.01, violence: 0.05, 'self-harm': 0.01 };
+          const labels = ['name','text'];
+          let anyFlagged = false;
+          const analysis = (moderation.results || []).map((result, idx) => {
             const s = result.category_scores || {};
-            const flagged = result.flagged || s.sexual > strict.sexual || s.harassment > strict.harassment || s.hate > strict.hate || s.violence > strict.violence || s['self-harm'] > strict['self-harm'];
-            if (flagged) return res.status(400).json({ error: 'Your message contains inappropriate content and cannot be posted.' });
+            const tripped = Object.entries(strict).filter(([k, th]) => (s[k] || 0) > th).map(([k]) => k);
+            if (result.flagged || tripped.length) anyFlagged = true;
+            return { input: labels[idx] || String(idx), flagged: !!result.flagged, tripped, scores: s };
+          });
+          if (anyFlagged) {
+            return res.status(400).json({ error: 'Your message contains inappropriate content and cannot be posted.', analysis, thresholds: strict });
           }
         } catch (_) {
           // ignore moderation failures
         }
       }
       const cleanTitle = (typeof title === 'string' && title.trim().length > 0 && title.trim() !== '(optional)') ? title.trim() : null;
-      let { data, error } = await supabase
+      const ins = await supabase
         .from('friend_entries')
         .insert([{ name, text, title: cleanTitle, timestamp: new Date().toISOString() }])
         .select();
-      if (error) {
-        const fb = await supabase
-          .from('friend_entries')
-          .insert([{ name, text, timestamp: new Date().toISOString() }])
-          .select();
-        if (fb.error) throw error;
-        data = fb.data;
+      if (!ins.error) {
+        return res.status(200).json({ data: ins.data[0] });
       }
-      if (error) throw error;
-      return res.status(200).json({ data: data[0] });
+      // Fallback without title for older schema
+      const fb = await supabase
+        .from('friend_entries')
+        .insert([{ name, text, timestamp: new Date().toISOString() }])
+        .select();
+      if (fb.error) return res.status(500).json({ error: fb.error.message });
+      return res.status(200).json({ data: fb.data[0] });
     } catch (error) {
       return res.status(500).json({ error: error.message });
     }
