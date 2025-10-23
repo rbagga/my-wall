@@ -167,9 +167,29 @@ body.dark-mode .toggle-wall-button:hover {
     height: 30px;
     overflow: hidden;
 }
-.entry:hover { background: rgba(255,255,255,0.44); }
+.entry:hover {
+    -webkit-backdrop-filter: saturate(180%) blur(16px);
+    backdrop-filter: saturate(180%) blur(16px);
+    background:
+        linear-gradient(180deg, rgba(255,255,255,0.30) 0%, rgba(255,255,255,0.12) 12%, rgba(255,255,255,0.00) 44%),
+        linear-gradient(180deg, var(--accent-a1) 0%, var(--accent-a2) 100%),
+        rgba(255,255,255,0.34);
+    box-shadow:
+        inset 0 0 0 0.5px rgba(255,255,255,0.16),
+        0 8px 18px var(--glass-shadow);
+}
 body.dark-mode .entry { background: rgba(20,24,36,0.34); border-bottom-color: rgba(110,120,200,0.18); }
-body.dark-mode .entry:hover { background: rgba(20,24,36,0.44); }
+body.dark-mode .entry:hover {
+    -webkit-backdrop-filter: saturate(180%) blur(16px);
+    backdrop-filter: saturate(180%) blur(16px);
+    background:
+        linear-gradient(180deg, rgba(255,255,255,0.24) 0%, rgba(255,255,255,0.10) 12%, rgba(255,255,255,0.00) 44%),
+        linear-gradient(180deg, var(--accent-a1) 0%, var(--accent-a2) 100%),
+        rgba(20,24,36,0.34);
+    box-shadow:
+        inset 0 0 0 0.5px rgba(255,255,255,0.14),
+        0 10px 22px var(--glass-shadow);
+}
 
 /* Removed legacy solid backgrounds to keep theme translucency */
 
@@ -703,6 +723,38 @@ button[type="submit"]:not(.btn-liquid):hover {
 .error {
     color: #d32f2f;
     font-size: 13px;
+}
+
+/* Themed select to match liquid buttons */
+.select-liquid {
+    color: inherit;
+    font: inherit;
+    background: transparent;
+    border: none;
+    padding: 6px 12px;
+    border-radius: 999px;
+    cursor: pointer;
+    box-shadow:
+        inset 0 0 0 0.5px rgba(255,255,255,0.18),
+        0 0 0 1px rgba(255,255,255,0.38);
+    transition: background 0.2s ease, box-shadow 0.2s ease;
+}
+.select-liquid:hover {
+    background:
+        linear-gradient(180deg, rgba(255,255,255,0.30) 0%, rgba(255,255,255,0.12) 14%, rgba(255,255,255,0.00) 44%),
+        linear-gradient(180deg, var(--accent-a1) 0%, var(--accent-a2) 100%);
+    box-shadow:
+        inset 0 0 0 0.5px rgba(255,255,255,0.26),
+        0 0 0 1px rgba(255,255,255,0.48),
+        0 8px 18px var(--glass-shadow);
+}
+.select-liquid:focus-visible {
+    outline: none;
+    box-shadow:
+        0 0 0 2px rgba(255,255,255,0.6),
+        0 0 0 4px var(--accent),
+        inset 0 0 0 0.5px rgba(255,255,255,0.26),
+        0 6px 16px var(--glass-shadow);
 }
 
 /* Share modal tweaks */

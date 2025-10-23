@@ -694,8 +694,9 @@ class WallApp {
             <h3>New Entry</h3>
             <input type="text" id="entryTitle" placeholder="Title (optional)">
             <textarea id="entryText" placeholder="Write your entry..." required></textarea>
-            <div style="display:flex; gap:8px;">
+            <div style="display:flex; gap:8px; align-items:center;">
                 <button type="submit" id="publishBtn" class="btn-liquid clear">Publish</button>
+                ${this.currentWall === 'drafts' ? `<select id="publishTarget" class="select-liquid" style="margin-left:8px;"><option value="rishu">rishu's wall</option><option value="tech">tech notes</option></select>` : ''}
                 <button type="button" id="saveDraftBtn" class="btn-liquid clear">Save Draft</button>
             </div>
         `;
@@ -1181,6 +1182,42 @@ class WallApp {
         if (submitBtn) submitBtn.disabled = true;
         form.classList.add('is-submitting');
 
+        // Determine publish target (drafts page can choose)
+        const targetSel = form.querySelector('#publishTarget');
+        const target = (this.currentWall === 'drafts' && targetSel) ? (targetSel.value || 'rishu') : 'rishu';
+
+        if (target === 'tech') {
+            // Submit to tech notes
+            this.closeModal();
+            this.saveTechNote(text, this.tempPassword, title)
+                .then((created) => {
+                    // Update tech cache optimistically after success (no temp)
+                    const list = Array.isArray(this.entriesCache.tech) ? this.entriesCache.tech : [];
+                    this.entriesCache.tech = [created, ...list];
+                    if (this.currentWall === 'tech') {
+                        this.entries = this.entriesCache.tech;
+                        this.renderEntries();
+                    }
+                })
+                .catch((error) => {
+                    const msg = String(error && error.message) || '';
+                    if (msg === 'Invalid password') {
+                        this.tempPassword = null;
+                        alert('Invalid password. Please try again.');
+                    } else if (/Tech notes require DB migration/i.test(msg)) {
+                        alert('Tech notes require DB migration. Please run supabase db push.');
+                    } else {
+                        alert('Error saving note. Please try again.');
+                    }
+                })
+                .finally(() => {
+                    if (submitBtn) submitBtn.disabled = false;
+                    form.classList.remove('is-submitting');
+                });
+            return;
+        }
+
+        // Default: publish to rishu's wall
         // Optimistic insert into UI/cache and close modal immediately
         const tempId = `temp-${Date.now()}-${Math.random().toString(36).slice(2,6)}`;
         const tempEntry = {
