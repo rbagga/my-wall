@@ -14,6 +14,8 @@ class WallApp {
         this._mouseDrag = { active: false, el: null };
         this._dragIntent = null; // pending drag start info (click-vs-drag threshold)
         this._suppressClickUntil = 0; // timestamp to ignore click right after a drag
+        this._modalContext = null; // tracks which modal is open (e.g., 'new-entry')
+        this._activeForm = null; // reference to the active modal form, if any
 
         this.init();
     }
@@ -183,13 +185,13 @@ class WallApp {
         // Add button click
         this.dom.addButton.addEventListener('click', () => this.handleAddButtonClick());
 
-        // Close button click
+        // Close button click (explicit close: do NOT autosave)
         this.dom.closeBtn.addEventListener('click', () => this.closeModal());
 
-        // Click outside modal to close
+        // Click outside modal (backdrop) — may autosave depending on context
         this.dom.modal.addEventListener('click', (e) => {
             if (e.target === this.dom.modal) {
-                this.closeModal();
+                this.handleModalBackdropClick();
             }
         });
 
@@ -761,6 +763,10 @@ class WallApp {
         this.dom.modalBody.innerHTML = '';
         this.dom.modalBody.appendChild(form);
 
+        // Track modal state for backdrop autosave logic
+        this._modalContext = 'new-entry';
+        this._activeForm = form;
+
         // native placeholder handles optional UX for title
 
         form.addEventListener('submit', (e) => this.handleEntrySubmit(e));
@@ -807,6 +813,44 @@ class WallApp {
         }, 100);
     }
 
+    async handleModalBackdropClick() {
+        // Autosave for any text-entry modal if authenticated
+        if (this.isAuthenticated && this._activeForm) {
+            const eligibleContexts = new Set([
+                'new-entry',
+                'friend-entry',
+                'tech-entry',
+                'songs-entry',
+                'edit-entry',
+                'tech-edit',
+                'songs-edit',
+            ]);
+            if (eligibleContexts.has(this._modalContext)) {
+                try {
+                    const form = this._activeForm;
+                    const textarea = form.querySelector('#entryText');
+                    const titleEl = form.querySelector('#entryTitle');
+                    const text = (textarea && textarea.value ? textarea.value : '').trim();
+                    const title = (titleEl && titleEl.value) ? titleEl.value : '';
+                    if (text) {
+                        const created = await this.saveEntry(text, this.tempPassword, 'draft', title);
+                        const next = [created, ...(Array.isArray(this.entriesCache.drafts) ? this.entriesCache.drafts : [])];
+                        this.entriesCache.drafts = next;
+                        if (this.currentWall === 'drafts') {
+                            this.entries = next;
+                            this.renderEntries();
+                        }
+                        this.closeModal();
+                        return;
+                    }
+                } catch (_) {
+                    // Silent fail; still close the modal
+                }
+            }
+        }
+        this.closeModal();
+    }
+
     showFriendEntryForm() {
         const form = document.createElement('form');
         form.className = 'entry-form';
@@ -822,6 +866,10 @@ class WallApp {
         this.dom.modalBody.appendChild(form);
 
         // native placeholder handles optional UX for title
+
+        // Track modal state
+        this._modalContext = 'friend-entry';
+        this._activeForm = form;
 
         form.addEventListener('submit', (e) => this.handleFriendEntrySubmit(e));
 
@@ -847,6 +895,8 @@ class WallApp {
         `;
         this.dom.modalBody.innerHTML = '';
         this.dom.modalBody.appendChild(form);
+        this._modalContext = 'songs-entry';
+        this._activeForm = form;
         const saveBtn = form.querySelector('#saveSongBtn');
         saveBtn.addEventListener('click', async () => {
             const textarea = form.querySelector('#entryText');
@@ -890,6 +940,9 @@ class WallApp {
 
         this.dom.modalBody.innerHTML = '';
         this.dom.modalBody.appendChild(form);
+
+        this._modalContext = 'edit-entry';
+        this._activeForm = form;
 
         const textarea = form.querySelector('#entryText');
         const titleInput = form.querySelector('#entryTitle');
@@ -1018,6 +1071,9 @@ class WallApp {
         this.dom.modalBody.innerHTML = '';
         this.dom.modalBody.appendChild(form);
 
+        this._modalContext = 'tech-entry';
+        this._activeForm = form;
+
         const titleInput = form.querySelector('#entryTitle');
         this.attachOptionalTitleBehavior(titleInput);
 
@@ -1098,6 +1154,8 @@ class WallApp {
         `;
         this.dom.modalBody.innerHTML = '';
         this.dom.modalBody.appendChild(form);
+        this._modalContext = 'tech-edit';
+        this._activeForm = form;
         const textarea = form.querySelector('#entryText');
         const titleInput = form.querySelector('#entryTitle');
         textarea.value = entry.text || '';
@@ -1133,6 +1191,8 @@ class WallApp {
         `;
         this.dom.modalBody.innerHTML = '';
         this.dom.modalBody.appendChild(form);
+        this._modalContext = 'songs-edit';
+        this._activeForm = form;
         const textarea = form.querySelector('#entryText');
         const titleInput = form.querySelector('#entryTitle');
         const spotInput = form.querySelector('#spotifyUrl');
@@ -1947,6 +2007,10 @@ class WallApp {
                 this.dom.modalBody.innerHTML = '';
             }
         }, 200);
+
+        // Reset modal context and active form
+        this._modalContext = null;
+        this._activeForm = null;
     }
 
     escapeHtml(text) {
