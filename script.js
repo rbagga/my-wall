@@ -6,8 +6,8 @@ class WallApp {
         this.entries = [];
         this.isAuthenticated = false;
         this.dom = {};
-        this.currentWall = 'rishu'; // 'rishu', 'friend', 'tech', 'songs', or 'drafts'
-        this.entriesCache = { rishu: null, friend: null, tech: null, songs: null, drafts: null };
+        this.currentWall = 'rishu'; // 'rishu', 'friend', 'tech', 'songs', 'ideas', or 'drafts'
+        this.entriesCache = { rishu: null, friend: null, tech: null, songs: null, ideas: null, drafts: null };
         this.spotifyCache = new Map();
         this.spotifyEmbedCache = new Map();
         this._dragImg = null; // legacy HTML5 DnD ghost suppressor (no longer used)
@@ -33,6 +33,7 @@ class WallApp {
         this.dom.draftsButton = document.getElementById('draftsButton');
         this.dom.techButton = document.getElementById('techButton');
         this.dom.songsButton = document.getElementById('songsButton');
+        this.dom.ideasButton = document.getElementById('ideasButton');
         // no organize button in UI
 
         // Load data
@@ -62,6 +63,7 @@ class WallApp {
             this.currentWall === 'friend' ? "No friend entries yet." :
             this.currentWall === 'tech' ? "No tech notes yet." :
             this.currentWall === 'songs' ? "No song quotes yet." :
+            this.currentWall === 'ideas' ? "No project ideas yet." :
             this.currentWall === 'drafts' ? "No drafts yet." :
             "No notes yet."
         );
@@ -136,6 +138,7 @@ class WallApp {
             if (wallKey === 'friend') endpoint = '/api/friend-entries';
             else if (wallKey === 'tech') endpoint = '/api/tech-notes';
             else if (wallKey === 'songs') endpoint = '/api/song-quotes';
+            else if (wallKey === 'ideas') endpoint = '/api/project-ideas';
             const response = await fetch(endpoint);
             const result = await response.json();
 
@@ -226,6 +229,13 @@ class WallApp {
             });
         }
 
+        // Project ideas button (always visible)
+        if (this.dom.ideasButton) {
+            this.dom.ideasButton.addEventListener('click', () => {
+                location.hash = '#ideas';
+            });
+        }
+
         // Drag-and-drop listeners (auth-gated in handlers)
         this.dom.wall.addEventListener('dragover', (e) => this.onDragOver(e));
         this.dom.wall.addEventListener('drop', (e) => this.onDrop(e));
@@ -254,6 +264,7 @@ class WallApp {
         let nextWall;
         if (hash.includes('tech')) nextWall = 'tech';
         else if (hash.includes('songs')) nextWall = 'songs';
+        else if (hash.includes('ideas')) nextWall = 'ideas';
         else if (hash.includes('friend')) nextWall = 'friend';
         else if (hash.includes('draft')) nextWall = 'drafts';
         else nextWall = 'rishu';
@@ -268,6 +279,9 @@ class WallApp {
             this.dom.toggleWallButton.textContent = "rishu's wall";
         } else if (this.currentWall === 'songs') {
             this.dom.wallTitle.textContent = 'song quotes';
+            this.dom.toggleWallButton.textContent = "rishu's wall";
+        } else if (this.currentWall === 'ideas') {
+            this.dom.wallTitle.textContent = 'project ideas';
             this.dom.toggleWallButton.textContent = "rishu's wall";
         } else if (this.currentWall === 'rishu') {
             this.dom.wallTitle.textContent = "rishu's wall";
@@ -305,6 +319,12 @@ class WallApp {
         } else if (this.currentWall === 'songs') {
             if (this.isAuthenticated) {
                 this.showSongsEntryForm();
+            } else {
+                this.showPasswordForm();
+            }
+        } else if (this.currentWall === 'ideas') {
+            if (this.isAuthenticated) {
+                this.showIdeasEntryForm();
             } else {
                 this.showPasswordForm();
             }
@@ -499,8 +519,8 @@ class WallApp {
 
         container.appendChild(content);
 
-        // Actions at bottom for main, friends, tech, and songs walls
-        if ((this.currentWall === 'rishu' || this.currentWall === 'friend' || this.currentWall === 'tech' || this.currentWall === 'songs') && isObj) {
+        // Actions at bottom for main, friends, tech, songs, and ideas walls
+        if ((this.currentWall === 'rishu' || this.currentWall === 'friend' || this.currentWall === 'tech' || this.currentWall === 'songs' || this.currentWall === 'ideas') && isObj) {
             const actions = document.createElement('div');
             actions.className = 'modal-actions';
 
@@ -523,8 +543,8 @@ class WallApp {
                 left.appendChild(delBtn);
             }
 
-            // Edit (auth only) for rishu, tech, songs walls
-            if (this.isAuthenticated && (this.currentWall === 'rishu' || this.currentWall === 'tech' || this.currentWall === 'songs')) {
+            // Edit (auth only) for rishu, tech, songs, ideas walls
+            if (this.isAuthenticated && (this.currentWall === 'rishu' || this.currentWall === 'tech' || this.currentWall === 'songs' || this.currentWall === 'ideas')) {
                 const editBtn = document.createElement('button');
                 editBtn.type = 'button';
                 editBtn.className = 'action-edit-btn btn-liquid clear';
@@ -537,6 +557,7 @@ class WallApp {
                 editBtn.addEventListener('click', () => {
                     if (this.currentWall === 'tech') this.showTechEditForm(entry);
                     else if (this.currentWall === 'songs') this.showSongsEditForm(entry);
+                    else if (this.currentWall === 'ideas') this.showIdeasEditForm(entry);
                     else this.showEditForm(entry);
                 });
                 right.appendChild(editBtn);
@@ -561,7 +582,7 @@ class WallApp {
                 // Show loading modal while generating link
                 this.showShareLoading();
                 try {
-                    if (this.currentWall === 'tech' || this.currentWall === 'songs') {
+                    if (this.currentWall === 'tech' || this.currentWall === 'songs' || this.currentWall === 'ideas') {
                         const base = location.origin || '';
                         const longUrl = `${base}/#${this.currentWall}&entry=${encodeURIComponent(entry.id)}`;
                         const { shortUrl } = await this.createShortLink(null, null, longUrl);
@@ -636,6 +657,15 @@ class WallApp {
                                     this.renderEntries();
                                 }
                             }
+                        } else if (this.currentWall === 'ideas') {
+                            await this.removeProjectIdea(entry.id);
+                            if (Array.isArray(this.entriesCache.ideas)) {
+                                this.entriesCache.ideas = this.entriesCache.ideas.filter(e => e.id !== entry.id);
+                                if (this.currentWall === 'ideas') {
+                                    this.entries = this.entriesCache.ideas;
+                                    this.renderEntries();
+                                }
+                            }
                         } else {
                             await this.removeEntry(entry.id);
                             if (Array.isArray(this.entriesCache.rishu)) {
@@ -670,6 +700,115 @@ class WallApp {
         this.dom.modalBody.innerHTML = '';
         this.dom.modalBody.appendChild(container);
         this.openModal();
+    }
+
+    showIdeasEntryForm() {
+        const form = document.createElement('form');
+        form.className = 'entry-form';
+        form.innerHTML = `
+            <h3>New Project Idea</h3>
+            <input type="text" id="entryTitle" placeholder="Title (optional)">
+            <textarea id="entryText" placeholder="Describe your idea..." required></textarea>
+            <div style="display:flex; gap:8px; align-items:center;">
+                <button type="button" id="saveIdeaBtn" class="btn-liquid clear">Publish</button>
+            </div>
+        `;
+        this.dom.modalBody.innerHTML = '';
+        this.dom.modalBody.appendChild(form);
+        this._modalContext = 'ideas-entry';
+        this._activeForm = form;
+
+        const saveBtn = form.querySelector('#saveIdeaBtn');
+        saveBtn.addEventListener('click', async () => {
+            const textarea = form.querySelector('#entryText');
+            const titleEl = form.querySelector('#entryTitle');
+            const text = (textarea.value || '').trim();
+            const title = (titleEl && titleEl.value) ? titleEl.value : '';
+            if (!text) { textarea.focus(); return; }
+            try {
+                const created = await this.saveProjectIdea(text, this.tempPassword, title);
+                const cur = Array.isArray(this.entriesCache.ideas) ? this.entriesCache.ideas : [];
+                this.entriesCache.ideas = [created, ...cur];
+                if (this.currentWall === 'ideas') { this.entries = this.entriesCache.ideas; this.renderEntries(); }
+                this.closeModal();
+            } catch (e) {
+                const msg = String(e && e.message) || '';
+                if (/Ideas require DB migration/i.test(msg)) alert('Ideas require DB migration. Please run supabase db push.');
+                else if (/Invalid password/i.test(msg)) { this.tempPassword = null; alert('Invalid password. Please try again.'); this.closeModal(); }
+                else alert('Error saving project idea.');
+            }
+        });
+        this.openModal();
+        setTimeout(() => document.getElementById('entryTitle')?.focus(), 100);
+    }
+
+    showIdeasEditForm(entry) {
+        const form = document.createElement('form');
+        form.className = 'entry-form';
+        form.innerHTML = `
+            <h3>Edit Project Idea</h3>
+            <input type="text" id="entryTitle" placeholder="Title (optional)" value="${(entry && entry.title) ? String(entry.title).replace(/&/g,'&amp;').replace(/\"/g,'&quot;') : ''}">
+            <textarea id="entryText" placeholder="Describe your idea..." required></textarea>
+            <div style="display:flex; gap:8px;">
+                <button type="button" id="saveIdeaBtn" class="btn-liquid clear">Save</button>
+            </div>
+        `;
+        this.dom.modalBody.innerHTML = '';
+        this.dom.modalBody.appendChild(form);
+        this._modalContext = 'ideas-edit';
+        this._activeForm = form;
+        const textarea = form.querySelector('#entryText');
+        const titleInput = form.querySelector('#entryTitle');
+        textarea.value = entry.text || '';
+        const saveBtn = form.querySelector('#saveIdeaBtn');
+        saveBtn.addEventListener('click', async () => {
+            const text = (textarea.value || '').trim();
+            const title = (titleInput && titleInput.value) ? titleInput.value : '';
+            if (!text) { textarea.focus(); return; }
+            try {
+                await this.updateProjectIdea(entry.id, text, title);
+                this.entriesCache.ideas = null;
+                await this.loadEntries();
+                this.closeModal();
+            } catch (e) {
+                alert('Error updating project idea.');
+            }
+        });
+        this.openModal();
+        setTimeout(() => titleInput?.focus(), 100);
+    }
+
+    async saveProjectIdea(text, password, title = null) {
+        const response = await fetch('/api/project-ideas', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ text, password, title: (typeof title === 'string' && title.trim() && title.trim() !== '(optional)') ? title.trim() : undefined })
+        });
+        const result = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(result.error || 'Error');
+        return result.data;
+    }
+
+    async updateProjectIdea(id, text, title = null) {
+        const response = await fetch('/api/update-project-idea', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ id, text, title: (typeof title === 'string' && title.trim() && title.trim() !== '(optional)') ? title.trim() : undefined, password: this.tempPassword })
+        });
+        const result = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(result.error || 'Error');
+        return result.data;
+    }
+
+    async removeProjectIdea(id) {
+        const response = await fetch('/api/delete-project-idea', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ id, password: this.tempPassword })
+        });
+        const result = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(result.error || 'Error');
+        return result.ok;
     }
 
     showPasswordForm() {
@@ -824,6 +963,8 @@ class WallApp {
                 'edit-entry',
                 'tech-edit',
                 'songs-edit',
+                'ideas-entry',
+                'ideas-edit',
             ]);
             if (eligibleContexts.has(this._modalContext)) {
                 try {

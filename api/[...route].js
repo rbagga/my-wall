@@ -405,6 +405,92 @@ async function techNotesHandler(req, res) {
   return res.status(405).json({ error: 'Method not allowed' });
 }
 
+// Project Ideas API (similar to tech_notes)
+async function projectIdeasHandler(req, res) {
+  if (req.method === 'GET') {
+    try {
+      let q = await supabase.from('project_ideas').select('*').order('timestamp', { ascending: false });
+      if (q.error) {
+        if (String(q.error.code) === '42703' || /column\s+"?timestamp"?/i.test(String(q.error.message || ''))) {
+          const fb = await supabase.from('project_ideas').select('*').order('id', { ascending: false });
+          if (fb.error) {
+            if (String(fb.error.code) === '42P01' || /project_ideas/i.test(String(fb.error.message || ''))) {
+              return res.status(200).json({ data: [] });
+            }
+            throw fb.error;
+          }
+          return res.status(200).json({ data: fb.data });
+        }
+        if (String(q.error.code) === '42P01' || /project_ideas/i.test(String(q.error.message || ''))) {
+          return res.status(200).json({ data: [] });
+        }
+        throw q.error;
+      }
+      return res.status(200).json({ data: q.data });
+    } catch (error) {
+      return res.status(500).json({ error: error.message });
+    }
+  }
+  if (req.method === 'POST') {
+    try {
+      const { text, password, title } = req.body || {};
+      if (!text) return res.status(400).json({ error: 'Text is required' });
+      if (password !== process.env.WALL_PASSWORD) return res.status(401).json({ error: 'Invalid password' });
+      const cleanTitle = (typeof title === 'string' && title.trim().length > 0 && title.trim() !== '(optional)') ? title.trim() : null;
+      let ins = await supabase.from('project_ideas').insert([{ text, title: cleanTitle }]).select();
+      if (ins.error) {
+        if (String(ins.error.code) === '42P01' || /project_ideas/i.test(String(ins.error.message || ''))) {
+          return res.status(400).json({ error: 'Ideas require DB migration. Please run supabase db push.' });
+        }
+        const fb = await supabase.from('project_ideas').insert([{ text }]).select();
+        if (fb.error) throw ins.error || fb.error;
+        ins = fb;
+      }
+      return res.status(200).json({ data: ins.data[0] });
+    } catch (error) {
+      return res.status(500).json({ error: error.message });
+    }
+  }
+  return res.status(405).json({ error: 'Method not allowed' });
+}
+
+async function deleteProjectIdeaHandler(req, res) {
+  if (req.method !== 'POST' && req.method !== 'DELETE') return res.status(405).json({ error: 'Method not allowed' });
+  try {
+    const body = req.body || {};
+    const id = body.id || (req.query && req.query.id);
+    const password = body.password || (req.query && req.query.password);
+    if (!id) return res.status(400).json({ error: 'Missing id' });
+    if (password !== process.env.WALL_PASSWORD) return res.status(401).json({ error: 'Invalid password' });
+    const { error } = await supabase.from('project_ideas').delete().eq('id', id);
+    if (error) throw error;
+    return res.status(200).json({ ok: true });
+  } catch (error) {
+    return res.status(500).json({ error: error.message });
+  }
+}
+
+async function updateProjectIdeaHandler(req, res) {
+  if (req.method !== 'POST' && req.method !== 'PATCH') return res.status(405).json({ error: 'Method not allowed' });
+  try {
+    const { id, text, password, title } = req.body || {};
+    if (!id) return res.status(400).json({ error: 'Missing id' });
+    if (password !== process.env.WALL_PASSWORD) return res.status(401).json({ error: 'Invalid password' });
+
+    const update = {};
+    if (typeof text === 'string') update.text = text;
+    if (typeof title === 'string') {
+      const cleanTitle = title.trim();
+      update.title = cleanTitle && cleanTitle !== '(optional)' ? cleanTitle : null;
+    }
+
+    let { data, error } = await supabase.from('project_ideas').update(update).eq('id', id).select();
+    if (error) throw error;
+    return res.status(200).json({ data: (data && data[0]) || null });
+  } catch (error) {
+    return res.status(500).json({ error: error.message });
+  }
+}
 async function deleteTechNoteHandler(req, res) {
   if (req.method !== 'POST' && req.method !== 'DELETE') return res.status(405).json({ error: 'Method not allowed' });
   try {
@@ -814,6 +900,9 @@ module.exports = async function handler(req, res) {
     if (head === 'delete-song-quote') return deleteSongQuoteHandler(req, res);
     if (head === 'update-song-quote') return updateSongQuoteHandler(req, res);
     if (head === 'shorten') return shortenHandler(req, res);
+    if (head === 'project-ideas') return projectIdeasHandler(req, res);
+    if (head === 'delete-project-idea') return deleteProjectIdeaHandler(req, res);
+    if (head === 'update-project-idea') return updateProjectIdeaHandler(req, res);
     if (head === 's') return sResolveHandler(req, res);
 
     return res.status(404).json({ error: 'Not found' });
