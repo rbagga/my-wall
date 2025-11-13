@@ -8,6 +8,9 @@ class WallApp {
         this.dom = {};
         this.currentWall = 'rishu'; // 'rishu', 'friend', 'tech', 'songs', 'ideas', or 'drafts'
         this.entriesCache = { rishu: null, friend: null, tech: null, songs: null, ideas: null, drafts: null };
+        this.series = [];
+        this.seriesLoaded = false;
+        this.seriesItemsCache = new Map(); // key: seriesId -> items array
         this.spotifyCache = new Map();
         this.spotifyEmbedCache = new Map();
         this._dragImg = null; // legacy HTML5 DnD ghost suppressor (no longer used)
@@ -82,6 +85,10 @@ class WallApp {
             const onDrafts = this.currentWall === 'drafts';
             this.dom.draftsButton.style.display = this.isAuthenticated && !onDrafts ? 'inline-block' : 'none';
         }
+        if (this.dom && this.dom.ideasButton) {
+            const onIdeas = this.currentWall === 'ideas';
+            this.dom.ideasButton.style.display = this.isAuthenticated && !onIdeas ? 'inline-block' : 'none';
+        }
     }
 
     saveAuthState() {
@@ -134,11 +141,35 @@ class WallApp {
                 return;
             }
 
+            // Auth-only ideas list (not public)
+            if (wallKey === 'ideas') {
+                const response = await fetch('/api/project-ideas', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ password: this.tempPassword })
+                });
+                const result = await response.json().catch(() => ({}));
+                if (!response.ok) {
+                    if (response.status === 401) {
+                        await this.promptForPassword().catch(() => {});
+                        if (!this.isAuthenticated) return;
+                        this.entriesCache.ideas = null;
+                        return this.loadEntries();
+                    }
+                    throw new Error(result.error || 'Failed to load ideas');
+                }
+                const fresh = result.data || [];
+                this.entriesCache.ideas = fresh;
+                this.entries = fresh;
+                this.renderEntries();
+                if (this._pendingEntryId) this.openPendingEntry();
+                return;
+            }
+
             let endpoint = '/api/entries';
             if (wallKey === 'friend') endpoint = '/api/friend-entries';
             else if (wallKey === 'tech') endpoint = '/api/tech-notes';
             else if (wallKey === 'songs') endpoint = '/api/song-quotes';
-            else if (wallKey === 'ideas') endpoint = '/api/project-ideas';
             const response = await fetch(endpoint);
             const result = await response.json();
 
@@ -148,6 +179,13 @@ class WallApp {
             this.entriesCache[wallKey] = fresh;
             this.entries = fresh;
             this.renderEntries();
+            // Prefetch series items to enable duplicate filtering, then re-render
+            if (this.currentWall === wallKey) {
+                this.prefetchSeriesItemsForCurrentWall().then(() => {
+                    // Only re-render if still on same wall
+                    if (this.currentWall === wallKey) this.renderEntries();
+                }).catch(() => {});
+            }
             if (this._pendingEntryId) this.openPendingEntry();
         } catch (error) {
             console.error('Error loading entries:', error);
@@ -229,9 +267,13 @@ class WallApp {
             });
         }
 
-        // Project ideas button (always visible)
+        // Project ideas button (auth-only)
         if (this.dom.ideasButton) {
             this.dom.ideasButton.addEventListener('click', () => {
+                if (!this.isAuthenticated) {
+                    this.showPasswordForm();
+                    return;
+                }
                 location.hash = '#ideas';
             });
         }
@@ -239,6 +281,12 @@ class WallApp {
         // Drag-and-drop listeners (auth-gated in handlers)
         this.dom.wall.addEventListener('dragover', (e) => this.onDragOver(e));
         this.dom.wall.addEventListener('drop', (e) => this.onDrop(e));
+
+        // Global click to dismiss custom context menu
+        document.addEventListener('click', (e) => {
+            const menu = document.getElementById('entryContextMenu');
+            if (menu && !menu.contains(e.target)) menu.remove();
+        });
     }
 
     setupRouting() {
@@ -305,6 +353,9 @@ class WallApp {
             this.showLoading();
         }
         this.loadEntries();
+
+        // Preload series info for any wall
+        this.loadSeries().catch(() => {});
     }
 
     handleAddButtonClick() {
@@ -340,10 +391,27 @@ class WallApp {
     renderEntries() {
         this.dom.wall.innerHTML = '';
         // Sort: pinned first by pin_order asc, then others by timestamp desc
-        const entries = [...this.entries];
-        if (!entries.length) {
+        let entries = [...this.entries];
+        const hasSeries = Array.isArray(this.series) && this.series.length > 0;
+        const hasEntries = entries.length > 0;
+
+        // Render series cards first (if any), even if there are no entries
+        if (hasSeries) {
+            this.series.forEach((s) => {
+                const card = this.renderSeriesCard(s);
+                this.dom.wall.appendChild(card);
+            });
+        }
+
+        if (!hasEntries && !hasSeries) {
             this.showEmptyState();
             return;
+        }
+
+        // Filter out entries that are members of any series on this wall, unless the entry is pinned
+        const hiddenIds = this.getSeriesMemberIdsForCurrentWall();
+        if (hiddenIds && hiddenIds.size) {
+            entries = entries.filter(e => e.is_pinned || !hiddenIds.has(String(e.id)));
         }
         const hasPinInfo = entries.some(e => typeof e.is_pinned !== 'undefined' || typeof e.pin_order !== 'undefined');
         let sorted = entries;
@@ -373,6 +441,28 @@ class WallApp {
             entryDiv.className = 'entry';
             entryDiv.dataset.id = entry.id;
             if (entry.is_pinned) entryDiv.classList.add('pinned');
+
+            // Auth-only: allow DnD to add to series on all walls.
+            // Avoid conflict with pinned reorder on rishu by skipping draggable for pinned rows.
+            if (this.isAuthenticated && (!entry.is_pinned || this.currentWall !== 'rishu')) {
+                entryDiv.setAttribute('draggable', 'true');
+                entryDiv.addEventListener('dragstart', (ev) => {
+                    const payload = { id: entry.id, type: this.currentWall };
+                    try { ev.dataTransfer.setData('application/json', JSON.stringify(payload)); } catch(_) {}
+                    try { ev.dataTransfer.setData('text/plain', `${this.currentWall}:${entry.id}`); } catch(_) {}
+                    ev.dataTransfer.effectAllowed = 'move';
+                });
+                entryDiv.addEventListener('dragend', () => {
+                    const h = document.querySelector('.series-card.drag-over');
+                    if (h) h.classList.remove('drag-over');
+                });
+                // Right-click context menu: add to series / create series
+                entryDiv.addEventListener('contextmenu', (ev) => {
+                    if (!this.isAuthenticated) return;
+                    ev.preventDefault();
+                    this.showEntryContextMenu(ev.clientX, ev.clientY, entry);
+                });
+            }
 
             const timestampSpan = document.createElement('span');
             timestampSpan.className = 'entry-timestamp';
@@ -474,6 +564,401 @@ class WallApp {
         // dragover/drop listeners added once in setup
     }
 
+    // Series: data and UI
+    async loadSeries() {
+        try {
+            const wall = this.currentWall;
+            const resp = await fetch(`/api/series?wall=${encodeURIComponent(wall)}`);
+            const result = await resp.json().catch(() => ({}));
+            if (!resp.ok) throw new Error(result.error || 'Failed to load series');
+            this.series = result.data || [];
+            this.seriesLoaded = true;
+            // re-render to show series cards for current wall
+            const cached = this.entriesCache[this.currentWall];
+            if (Array.isArray(cached)) {
+                this.entries = cached;
+            }
+            this.renderEntries();
+        } catch (e) {
+            // If table missing or other error, just leave empty
+            this.series = [];
+            this.seriesLoaded = true;
+        }
+    }
+
+    renderSeriesCard(series) {
+        const card = document.createElement('div');
+        card.className = 'entry series-card';
+        card.dataset.seriesId = String(series.id);
+        // timestamp placeholder (hidden via CSS for series-card)
+        const ts = document.createElement('span');
+        ts.className = 'entry-timestamp';
+        ts.textContent = '';
+        card.appendChild(ts);
+
+        const titleSpan = document.createElement('span');
+        titleSpan.className = 'entry-title series-title';
+        titleSpan.textContent = String(series.title || '').trim() || 'Untitled Series';
+        card.appendChild(titleSpan);
+
+        // Centering spacer
+        const spacer = document.createElement('span');
+        spacer.className = 'series-spacer';
+        card.appendChild(spacer);
+
+        // Toggle button
+        const toggle = document.createElement('button');
+        toggle.type = 'button';
+        toggle.className = 'series-toggle';
+        toggle.setAttribute('aria-label', 'Toggle series');
+        toggle.innerHTML = `
+            <svg class="chev" viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M6 8 L12 16 L18 8 Z" />
+            </svg>
+        `;
+        card.appendChild(toggle);
+
+        // Right-click context menu on series card (auth only)
+        if (this.isAuthenticated) {
+            card.addEventListener('contextmenu', (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                this.showSeriesContextMenu(e.clientX, e.clientY, series);
+            });
+        }
+
+        const itemsWrap = document.createElement('div');
+        itemsWrap.className = 'series-items hidden';
+
+        const ensureLoaded = async () => {
+            const sid = series.id;
+            if (!this.seriesItemsCache.has(String(sid))) {
+                const resp = await fetch(`/api/series-items?series_id=${encodeURIComponent(sid)}`);
+                const result = await resp.json().catch(() => ({}));
+                const data = resp.ok ? (result.data || []) : [];
+                this.seriesItemsCache.set(String(sid), data);
+            }
+            const items = this.seriesItemsCache.get(String(sid)) || [];
+            itemsWrap.innerHTML = '';
+            if (!items.length) {
+                const empty = document.createElement('div');
+                empty.className = 'series-empty';
+                empty.textContent = 'No notes in this series yet.';
+                itemsWrap.appendChild(empty);
+                return;
+            }
+            items.forEach(en => {
+                const row = this.buildSeriesEntryRow(en);
+                itemsWrap.appendChild(row);
+            });
+        };
+
+        const toggleOpen = async () => {
+            if (itemsWrap.classList.contains('hidden')) {
+                // Attach group after the card on first open
+                if (!itemsWrap.parentNode && card.parentNode) {
+                    if (card.nextSibling) card.parentNode.insertBefore(itemsWrap, card.nextSibling);
+                    else card.parentNode.appendChild(itemsWrap);
+                }
+                await ensureLoaded();
+                itemsWrap.classList.remove('hidden');
+                card.classList.add('expanded');
+            } else {
+                itemsWrap.classList.add('hidden');
+                card.classList.remove('expanded');
+            }
+        };
+
+        toggle.addEventListener('click', (e) => { e.stopPropagation(); toggleOpen(); });
+        card.addEventListener('click', () => toggleOpen());
+
+        // Accept drops to add entries to series (auth only)
+        if (this.isAuthenticated) {
+            card.addEventListener('dragover', (ev) => {
+                try { ev.preventDefault(); } catch(_){}
+                card.classList.add('drag-over');
+            });
+            card.addEventListener('dragleave', () => { card.classList.remove('drag-over'); });
+            card.addEventListener('drop', async (ev) => {
+                try { ev.preventDefault(); } catch(_){}
+                card.classList.remove('drag-over');
+                let id = null; let type = null;
+                try {
+                    const json = ev.dataTransfer.getData('application/json');
+                    if (json) { const o = JSON.parse(json); id = o.id; type = o.type; }
+                } catch(_) {}
+                if (!id) {
+                    try {
+                        const txt = ev.dataTransfer.getData('text/plain');
+                        if (txt && txt.includes(':')) { const [t, i] = txt.split(':'); type = t; id = i; }
+                        else if (txt) { id = txt; type = this.currentWall; }
+                    } catch(_) {}
+                }
+                if (!id) return;
+                try {
+                    await this.addToSeries(series.id, id, type || this.currentWall);
+                    // refresh items cache and view if expanded
+                    this.seriesItemsCache.delete(String(series.id));
+                    if (card.classList.contains('expanded')) await ensureLoaded();
+                } catch (e) {
+                    const msg = String(e && e.message || 'Failed to add to series');
+                    alert(msg);
+                }
+            });
+        }
+
+        return card;
+    }
+
+    async createSeries(title) {
+        const resp = await fetch('/api/series', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ title, password: this.tempPassword, wall: this.currentWall })
+        });
+        const result = await resp.json().catch(() => ({}));
+        if (!resp.ok) throw new Error(result.error || 'Error creating series');
+        return result.data;
+    }
+
+    async addToSeries(seriesId, entryId, type) {
+        const resp = await fetch('/api/series-items', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ series_id: seriesId, source_type: type, source_id: entryId, password: this.tempPassword })
+        });
+        const result = await resp.json().catch(() => ({}));
+        if (!resp.ok) throw new Error(result.error || 'Failed to add to series');
+        return true;
+    }
+
+    async removeFromSeries(seriesId, entryId, type) {
+        const resp = await fetch('/api/series-items', {
+            method: 'DELETE',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ series_id: seriesId, source_type: type, source_id: entryId, password: this.tempPassword })
+        });
+        const result = await resp.json().catch(() => ({}));
+        if (!resp.ok) throw new Error(result.error || 'Failed to remove from series');
+        return true;
+    }
+
+    async deleteSeries(seriesId) {
+        const resp = await fetch(`/api/series?id=${encodeURIComponent(seriesId)}`, {
+            method: 'DELETE',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ password: this.tempPassword })
+        });
+        const result = await resp.json().catch(() => ({}));
+        if (!resp.ok) throw new Error(result.error || 'Failed to delete series');
+        return true;
+    }
+
+    showSeriesContextMenu(x, y, series) {
+        // Remove existing menu if present
+        const old = document.getElementById('entryContextMenu');
+        if (old) old.remove();
+        const wrap = document.createElement('div');
+        wrap.id = 'entryContextMenu';
+        wrap.className = 'context-menu';
+        wrap.style.left = x + 'px';
+        wrap.style.top = y + 'px';
+
+        const del = document.createElement('div');
+        del.className = 'context-item';
+        del.textContent = 'Delete series…';
+        del.addEventListener('click', async (ev) => {
+            ev.stopPropagation();
+            wrap.remove();
+            const ok = confirm('Delete this series? Items will remain on their walls.');
+            if (!ok) return;
+            try {
+                await this.deleteSeries(series.id);
+                this.series = (this.series || []).filter(s => String(s.id) !== String(series.id));
+                this.seriesItemsCache.delete(String(series.id));
+                this.renderEntries();
+            } catch (e) {
+                alert('Failed to delete series');
+            }
+        });
+        wrap.appendChild(del);
+
+        document.body.appendChild(wrap);
+    }
+
+    showEntryContextMenu(x, y, entry) {
+        // Remove any existing
+        const old = document.getElementById('entryContextMenu');
+        if (old) old.remove();
+        const wrap = document.createElement('div');
+        wrap.id = 'entryContextMenu';
+        wrap.className = 'context-menu';
+        wrap.style.left = x + 'px';
+        wrap.style.top = y + 'px';
+
+        const add = document.createElement('div');
+        add.className = 'context-item';
+        add.textContent = 'Add to series…';
+        wrap.appendChild(add);
+
+        const sub = document.createElement('div');
+        sub.className = 'context-submenu hidden';
+        wrap.appendChild(sub);
+
+        add.addEventListener('mouseenter', () => {
+            const populate = () => {
+                sub.innerHTML = '';
+                const list = (this.series && this.series.length) ? this.series : [];
+                if (!list.length) {
+                    const it = document.createElement('div');
+                    it.className = 'context-item disabled';
+                    it.textContent = 'No series yet';
+                    sub.appendChild(it);
+                } else {
+                    list.forEach(s => {
+                        const it = document.createElement('div');
+                        it.className = 'context-item';
+                        it.textContent = s.title || 'Untitled series';
+                        it.addEventListener('click', async (ev) => {
+                            ev.stopPropagation();
+                            wrap.remove();
+                            try { await this.addToSeries(s.id, entry.id, this.currentWall); } catch (e) { alert(String(e && e.message || 'Failed')); }
+                        });
+                        sub.appendChild(it);
+                    });
+                }
+                sub.classList.remove('hidden');
+            };
+            if (!this.seriesLoaded) {
+                this.loadSeries().then(populate).catch(populate);
+            } else {
+                populate();
+            }
+        });
+        add.addEventListener('mouseleave', () => { setTimeout(() => sub.classList.add('hidden'), 200); });
+
+        const create = document.createElement('div');
+        create.className = 'context-item';
+        create.textContent = 'Create new series…';
+        create.addEventListener('click', async () => {
+            const name = prompt('Series title');
+            if (!name) return;
+            try {
+                const s = await this.createSeries(name);
+                this.series = [s, ...(this.series || [])];
+                await this.addToSeries(s.id, entry.id, this.currentWall);
+                // show the new series card immediately on any wall
+                this.renderEntries();
+            } catch (e) {
+                alert(String(e && e.message || 'Failed to create series'));
+            } finally {
+                wrap.remove();
+            }
+        });
+        wrap.appendChild(create);
+
+        document.body.appendChild(wrap);
+    }
+
+    stripHtml(s = '') { const d = document.createElement('div'); d.innerHTML = String(s || ''); return (d.textContent || '').trim(); }
+
+    buildSeriesEntryRow(en) {
+        const type = en._type || this.currentWall || 'rishu';
+        const row = document.createElement('div');
+        row.className = 'entry series-item';
+        row.dataset.id = en.id;
+
+        // timestamp
+        const timestampSpan = document.createElement('span');
+        timestampSpan.className = 'entry-timestamp';
+        timestampSpan.textContent = en.timestamp ? this.formatTimestamp(en.timestamp) : '';
+        row.appendChild(timestampSpan);
+
+        // friend name
+        if (type === 'friend' && en.name) {
+            const nameSpan = document.createElement('span');
+            nameSpan.className = 'entry-name';
+            nameSpan.textContent = en.name;
+            row.appendChild(nameSpan);
+        }
+
+        // songs thumbnail
+        if (type === 'songs' && en.spotify_url) {
+            const thumb = document.createElement('img');
+            thumb.alt = 'Album art';
+            thumb.className = 'spotify-thumb';
+            this.fetchSpotifyArt(en.spotify_url).then((url) => { if (url) thumb.src = url; });
+            row.appendChild(thumb);
+        }
+
+        // title + divider
+        const hasTitle = typeof en.title === 'string' && en.title.trim().length > 0;
+        if (hasTitle) {
+            const titleSpan = document.createElement('span');
+            titleSpan.className = 'entry-title';
+            titleSpan.textContent = en.title.trim();
+            row.appendChild(titleSpan);
+            const vdiv = document.createElement('span');
+            vdiv.className = 'vdiv';
+            row.appendChild(vdiv);
+        }
+
+        // body text
+        const textSpan = document.createElement('span');
+        textSpan.className = 'entry-text';
+        textSpan.innerHTML = this.linkify(en.text || '');
+        row.appendChild(textSpan);
+
+        // click to open on appropriate wall
+        row.addEventListener('click', (ev) => {
+            if (ev.target && ev.target.closest && ev.target.closest('a')) {
+                ev.stopPropagation();
+                return;
+            }
+            const id = en.id;
+            const h = type === 'rishu' ? `#rishu&entry=${id}`
+                     : type === 'friend' ? `#friend&entry=${id}`
+                     : type === 'tech' ? `#tech&entry=${id}`
+                     : type === 'songs' ? `#songs&entry=${id}`
+                     : type === 'ideas' ? `#ideas&entry=${id}`
+                     : `#rishu&entry=${id}`;
+            location.hash = h;
+        });
+
+        return row;
+    }
+
+    // Series helpers
+    async prefetchSeriesItemsForCurrentWall() {
+        if (!Array.isArray(this.series) || !this.series.length) return;
+        const toLoad = this.series.filter(s => !this.seriesItemsCache.has(String(s.id)));
+        if (!toLoad.length) return;
+        await Promise.all(toLoad.map(async (s) => {
+            try {
+                const resp = await fetch(`/api/series-items?series_id=${encodeURIComponent(s.id)}`);
+                const result = await resp.json().catch(() => ({}));
+                const data = resp.ok ? (result.data || []) : [];
+                this.seriesItemsCache.set(String(s.id), data);
+            } catch (_) { /* ignore */ }
+        }));
+    }
+
+    getSeriesMemberIdsForCurrentWall() {
+        if (!Array.isArray(this.series) || !this.series.length) return new Set();
+        const wall = this.currentWall;
+        const ids = new Set();
+        for (const s of this.series) {
+            const arr = this.seriesItemsCache.get(String(s.id));
+            if (!Array.isArray(arr)) continue;
+            for (const item of arr) {
+                const t = item && (item._type || wall);
+                if (t === wall && item && item.id != null) ids.add(String(item.id));
+            }
+        }
+        return ids;
+    }
+
+
     formatTimestamp(isoString) {
         const date = new Date(isoString);
 
@@ -519,7 +1004,7 @@ class WallApp {
 
         container.appendChild(content);
 
-        // Actions at bottom for main, friends, tech, songs, and ideas walls
+        // Actions at bottom for main, friends, tech, and songs walls (ideas: no sharing)
         if ((this.currentWall === 'rishu' || this.currentWall === 'friend' || this.currentWall === 'tech' || this.currentWall === 'songs' || this.currentWall === 'ideas') && isObj) {
             const actions = document.createElement('div');
             actions.className = 'modal-actions';
@@ -563,46 +1048,44 @@ class WallApp {
                 right.appendChild(editBtn);
             }
 
-            // Share icon button (all walls)
-            const shareBtn = document.createElement('button');
-            shareBtn.type = 'button';
-            shareBtn.className = 'icon-btn btn-liquid clear';
-            shareBtn.title = 'Share link';
-            shareBtn.setAttribute('aria-label', 'Share link');
-            // Tray-only share icon (rounded tray + up arrow), slightly larger
-            shareBtn.innerHTML = `
-                <svg viewBox=\"0 0 24 24\" width=\"22\" height=\"22\" aria-hidden=\"true\">
-                  <!-- Up arrow -->
-                  <path d=\"M12 13V6\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.6\" stroke-linecap=\"round\"/>
-                  <path d=\"M9 9l3-3 3 3\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.6\" stroke-linecap=\"round\" stroke-linejoin=\"round\"/>
-                  <!-- Rounded tray at bottom -->
-                  <rect x=\"5\" y=\"14\" width=\"14\" height=\"5\" rx=\"2.5\" ry=\"2.5\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.6\"/>
-                </svg>`;
-            shareBtn.addEventListener('click', async () => {
-                // Show loading modal while generating link
-                this.showShareLoading();
-                try {
-                    if (this.currentWall === 'tech' || this.currentWall === 'songs' || this.currentWall === 'ideas') {
-                        const base = location.origin || '';
-                        const longUrl = `${base}/#${this.currentWall}&entry=${encodeURIComponent(entry.id)}`;
-                        const { shortUrl } = await this.createShortLink(null, null, longUrl);
-                        this.showShareModal(shortUrl || longUrl);
-                        return;
+            // Share icon button (disabled for ideas wall)
+            if (this.currentWall !== 'ideas') {
+                const shareBtn = document.createElement('button');
+                shareBtn.type = 'button';
+                shareBtn.className = 'icon-btn btn-liquid clear';
+                shareBtn.title = 'Share link';
+                shareBtn.setAttribute('aria-label', 'Share link');
+                shareBtn.innerHTML = `
+                    <svg viewBox=\"0 0 24 24\" width=\"22\" height=\"22\" aria-hidden=\"true\">
+                      <path d=\"M12 13V6\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.6\" stroke-linecap=\"round\"/>
+                      <path d=\"M9 9l3-3 3 3\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.6\" stroke-linecap=\"round\" stroke-linejoin=\"round\"/>
+                      <rect x=\"5\" y=\"14\" width=\"14\" height=\"5\" rx=\"2.5\" ry=\"2.5\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.6\"/>
+                    </svg>`;
+                shareBtn.addEventListener('click', async () => {
+                    this.showShareLoading();
+                    try {
+                        if (this.currentWall === 'tech' || this.currentWall === 'songs') {
+                            const base = location.origin || '';
+                            const longUrl = `${base}/#${this.currentWall}&entry=${encodeURIComponent(entry.id)}`;
+                            const { shortUrl } = await this.createShortLink(null, null, longUrl);
+                            this.showShareModal(shortUrl || longUrl);
+                            return;
+                        }
+                        const { shortUrl } = await this.createShortLink(entry.id, this.currentWall === 'friend' ? 'friend' : 'rishu');
+                        this.showShareModal(shortUrl);
+                    } catch (e) {
+                        const msg = String(e && e.message) || '';
+                        if (/Short links require DB migration/i.test(msg)) {
+                            this.showShareError('Short links require DB migration. Please run supabase db push.');
+                        } else if (/External shortener failed/i.test(msg)) {
+                            this.showShareError('Short-link service unavailable. Please try again.');
+                        } else {
+                            this.showShareError('Failed to create link. Please try again.');
+                        }
                     }
-                    const { shortUrl } = await this.createShortLink(entry.id, this.currentWall === 'friend' ? 'friend' : 'rishu');
-                    this.showShareModal(shortUrl);
-                } catch (e) {
-                    const msg = String(e && e.message) || '';
-                    if (/Short links require DB migration/i.test(msg)) {
-                        this.showShareError('Short links require DB migration. Please run supabase db push.');
-                    } else if (/External shortener failed/i.test(msg)) {
-                        this.showShareError('Short-link service unavailable. Please try again.');
-                    } else {
-                        this.showShareError('Failed to create link. Please try again.');
-                    }
-                }
-            });
-            center.appendChild(shareBtn);
+                });
+                center.appendChild(shareBtn);
+            }
 
             // Delete confirm UI (hidden until clicked)
             if (delBtn) {

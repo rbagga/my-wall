@@ -168,6 +168,191 @@ async function entriesHandler(req, res, parts) {
   return res.status(405).json({ error: 'Method not allowed' });
 }
 
+// Series: collections of wall entries
+// Tables expected (for full functionality):
+// - series (id, title, created_at)
+// - series_items (series_id, entry_id, position, created_at)
+// Handlers degrade gracefully: GET returns [] if tables missing; POST replies with actionable error.
+async function seriesHandler(req, res) {
+  if (req.method === 'GET') {
+    try {
+      const url = new URL(req.url, 'http://local');
+      const wall = (url.searchParams.get('wall') || '').toLowerCase();
+      const allowed = new Set(['rishu','friend','tech','songs','ideas']);
+      let q;
+      if (wall && allowed.has(wall)) {
+        q = await supabase.from('series').select('*').eq('home_wall', wall).order('created_at', { ascending: false });
+        if (q.error && String(q.error.code) === '42703') {
+          // Column home_wall missing – fallback to no filter
+          q = await supabase.from('series').select('*').order('created_at', { ascending: false });
+        }
+      } else {
+        q = await supabase.from('series').select('*').order('created_at', { ascending: false });
+      }
+      if (q.error) {
+        // Table likely missing; return empty list so UI can still render
+        if (String(q.error.code) === '42P01' || /series/i.test(String(q.error.message || ''))) {
+          return res.status(200).json({ data: [] });
+        }
+        throw q.error;
+      }
+      return res.status(200).json({ data: q.data || [] });
+    } catch (error) {
+      return res.status(500).json({ error: error.message });
+    }
+  }
+  if (req.method === 'DELETE' || (req.method === 'POST' && req.body && req.body._action === 'delete')) {
+    try {
+      const body = req.body || {};
+      const url = new URL(req.url, 'http://local');
+      const id = body.id || url.searchParams.get('id');
+      const password = body.password || url.searchParams.get('password');
+      if (!id) return res.status(400).json({ error: 'Missing id' });
+      if (password !== process.env.WALL_PASSWORD) return res.status(401).json({ error: 'Invalid password' });
+      const del = await supabase.from('series').delete().eq('id', id);
+      if (del.error) throw del.error;
+      return res.status(200).json({ ok: true });
+    } catch (error) {
+      return res.status(500).json({ error: error.message });
+    }
+  }
+  if (req.method === 'POST') {
+    try {
+      const { title, password, wall, home_wall } = req.body || {};
+      if (!title || !String(title).trim()) return res.status(400).json({ error: 'Title is required' });
+      if (password !== process.env.WALL_PASSWORD) return res.status(401).json({ error: 'Invalid password' });
+      const preferred = (home_wall || wall || 'rishu').toLowerCase();
+      const allowed = new Set(['rishu','friend','tech','songs','ideas']);
+      const hw = allowed.has(preferred) ? preferred : 'rishu';
+      let ins = await supabase.from('series').insert([{ title: String(title).trim(), home_wall: hw }]).select();
+      if (ins.error) {
+        const msg = String(ins.error.message || '');
+        const code = String(ins.error.code || '');
+        if (code === '42703' || /home_wall/i.test(msg)) {
+          // home_wall column missing; fallback insert without it
+          const fb = await supabase.from('series').insert([{ title: String(title).trim() }]).select();
+          if (fb.error) throw fb.error;
+          const row = fb.data && fb.data[0] ? { ...fb.data[0], home_wall: hw } : null;
+          return res.status(200).json({ data: row });
+        }
+        if (code === '42P01') {
+          return res.status(400).json({ error: 'Series require DB migration. Please run supabase db push.' });
+        }
+        throw ins.error;
+      }
+      return res.status(200).json({ data: (ins.data && ins.data[0]) || null });
+    } catch (error) {
+      return res.status(500).json({ error: error.message });
+    }
+  }
+  return res.status(405).json({ error: 'Method not allowed' });
+}
+
+async function seriesItemsHandler(req, res) {
+  if (req.method === 'GET') {
+    try {
+      const url = new URL(req.url, 'http://local');
+      const seriesId = url.searchParams.get('series_id');
+      if (!seriesId) return res.status(400).json({ error: 'series_id is required' });
+      // Fetch items for this series ordered by position then created_at
+      const items = await supabase
+        .from('series_items')
+        .select('source_type, source_id, position, created_at')
+        .eq('series_id', seriesId)
+        .order('position', { ascending: true, nullsFirst: false })
+        .order('created_at', { ascending: true });
+      if (items.error) {
+        if (String(items.error.code) === '42P01' || /series_items/i.test(String(items.error.message || ''))) {
+          return res.status(200).json({ data: [] });
+        }
+        throw items.error;
+      }
+      const rows = items.data || [];
+      if (!rows.length) return res.status(200).json({ data: [] });
+      // Group by type for batch fetches
+      const groups = rows.reduce((acc, r) => { (acc[r.source_type] ||= []).push(r.source_id); return acc; }, {});
+      const results = {};
+      // Helper to run a query and stash by type
+      async function fetchType(t, table, select = '*') {
+        const ids = Array.from(new Set(groups[t] || []));
+        if (!ids.length) { results[t] = new Map(); return; }
+        const q = await supabase.from(table).select(select).in('id', ids);
+        if (q.error) throw q.error;
+        results[t] = new Map((q.data || []).map(e => [String(e.id), e]));
+      }
+      // Fetch each present group
+      const tasks = [];
+      if (groups.rishu && groups.rishu.length) tasks.push(fetchType('rishu', 'wall_entries'));
+      if (groups.friend && groups.friend.length) tasks.push(fetchType('friend', 'friend_entries'));
+      if (groups.tech && groups.tech.length) tasks.push(fetchType('tech', 'tech_notes'));
+      if (groups.songs && groups.songs.length) tasks.push(fetchType('songs', 'song_quotes'));
+      if (groups.ideas && groups.ideas.length) tasks.push(fetchType('ideas', 'project_ideas'));
+      await Promise.all(tasks);
+      // Build ordered output preserving original ordering
+      const out = rows.map(r => {
+        const m = (results[r.source_type] || new Map());
+        const obj = m.get(String(r.source_id));
+        if (!obj) return null;
+        return { ...obj, _type: r.source_type };
+      }).filter(Boolean);
+      return res.status(200).json({ data: out });
+    } catch (error) {
+      return res.status(500).json({ error: error.message });
+    }
+  }
+  if (req.method === 'POST') {
+    // add item
+    try {
+      const { series_id, source_type, source_id, password } = req.body || {};
+      if (!series_id || !source_id || !source_type) return res.status(400).json({ error: 'series_id, source_type and source_id are required' });
+      const allowed = new Set(['rishu','friend','tech','songs','ideas']);
+      if (!allowed.has(source_type)) return res.status(400).json({ error: 'Invalid source_type' });
+      if (password !== process.env.WALL_PASSWORD) return res.status(401).json({ error: 'Invalid password' });
+      // Next position
+      const max = await supabase
+        .from('series_items')
+        .select('position')
+        .eq('series_id', series_id)
+        .order('position', { ascending: false, nullsFirst: false })
+        .limit(1)
+        .maybeSingle();
+      let next = 0;
+      if (max && max.data && typeof max.data.position === 'number') next = max.data.position + 1;
+      const ins = await supabase
+        .from('series_items')
+        .insert([{ series_id, source_type, source_id, position: next }])
+        .select();
+      if (ins.error) {
+        if (String(ins.error.code) === '42P01' || /series_items/i.test(String(ins.error.message || ''))) {
+          return res.status(400).json({ error: 'Series items require DB migration. Please run supabase db push.' });
+        }
+        throw ins.error;
+      }
+      return res.status(200).json({ ok: true });
+    } catch (error) {
+      return res.status(500).json({ error: error.message });
+    }
+  }
+  if (req.method === 'DELETE') {
+    try {
+      const body = req.body || {};
+      const url = new URL(req.url, 'http://local');
+      const series_id = body.series_id || url.searchParams.get('series_id');
+      const source_type = body.source_type || url.searchParams.get('source_type');
+      const source_id = body.source_id || url.searchParams.get('source_id');
+      const password = body.password || url.searchParams.get('password');
+      if (!series_id || !source_type || !source_id) return res.status(400).json({ error: 'series_id, source_type and source_id are required' });
+      if (password !== process.env.WALL_PASSWORD) return res.status(401).json({ error: 'Invalid password' });
+      const del = await supabase.from('series_items').delete().eq('series_id', series_id).eq('source_type', source_type).eq('source_id', source_id);
+      if (del.error) throw del.error;
+      return res.status(200).json({ ok: true });
+    } catch (error) {
+      return res.status(500).json({ error: error.message });
+    }
+  }
+  return res.status(405).json({ error: 'Method not allowed' });
+}
+
 async function updateEntryHandler(req, res) {
   if (req.method !== 'POST' && req.method !== 'PATCH') return res.status(405).json({ error: 'Method not allowed' });
   try {
@@ -407,8 +592,11 @@ async function techNotesHandler(req, res) {
 
 // Project Ideas API (similar to tech_notes)
 async function projectIdeasHandler(req, res) {
-  if (req.method === 'GET') {
+  // POST without text -> list (auth required)
+  if (req.method === 'POST' && (!req.body || typeof req.body.text === 'undefined')) {
     try {
+      const { password } = req.body || {};
+      if (password !== process.env.WALL_PASSWORD) return res.status(401).json({ error: 'Invalid password' });
       let q = await supabase.from('project_ideas').select('*').order('timestamp', { ascending: false });
       if (q.error) {
         if (String(q.error.code) === '42703' || /column\s+"?timestamp"?/i.test(String(q.error.message || ''))) {
@@ -431,6 +619,7 @@ async function projectIdeasHandler(req, res) {
       return res.status(500).json({ error: error.message });
     }
   }
+  // Create idea (auth required)
   if (req.method === 'POST') {
     try {
       const { text, password, title } = req.body || {};
@@ -891,11 +1080,13 @@ module.exports = async function handler(req, res) {
     if (head === 'reorder-pins') return reorderPinsHandler(req, res);
     if (head === 'friend-entries') return friendEntriesHandler(req, res);
     if (head === 'delete-friend-entry') return deleteFriendEntryHandler(req, res);
-    if (head === 'verify-password') return verifyPasswordHandler(req, res);
-    if (head === 'drafts') return draftsHandler(req, res);
-    if (head === 'tech-notes') return techNotesHandler(req, res);
-    if (head === 'delete-tech-note') return deleteTechNoteHandler(req, res);
-    if (head === 'update-tech-note') return updateTechNoteHandler(req, res);
+  if (head === 'verify-password') return verifyPasswordHandler(req, res);
+  if (head === 'drafts') return draftsHandler(req, res);
+  if (head === 'tech-notes') return techNotesHandler(req, res);
+  if (head === 'delete-tech-note') return deleteTechNoteHandler(req, res);
+  if (head === 'update-tech-note') return updateTechNoteHandler(req, res);
+  if (head === 'series') return seriesHandler(req, res);
+  if (head === 'series-items') return seriesItemsHandler(req, res);
     if (head === 'song-quotes') return songQuotesHandler(req, res);
     if (head === 'delete-song-quote') return deleteSongQuoteHandler(req, res);
     if (head === 'update-song-quote') return updateSongQuoteHandler(req, res);

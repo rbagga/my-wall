@@ -191,6 +191,85 @@ body.dark-mode .entry:hover {
         0 10px 22px var(--glass-shadow);
 }
 
+/* Series cards */
+.entry.series-card {
+    justify-content: center;
+    height: auto;
+    min-height: 34px;
+    overflow: visible;
+}
+.entry.series-card .entry-timestamp { display: none; }
+.entry.series-card .entry-text { display: none; }
+.entry.series-card .series-title {
+    flex: 1;
+    text-align: center;
+    font-weight: 700;
+}
+.entry.series-card .series-spacer { flex: 0 0 auto; }
+.entry.series-card .series-toggle {
+    border: none;
+    background: transparent;
+    color: inherit;
+    cursor: pointer;
+    padding: 2px 6px;
+    border-radius: 6px;
+}
+.entry.series-card .series-delete {
+    border: none;
+    background: transparent;
+    color: inherit;
+    cursor: pointer;
+    padding: 2px 6px;
+    border-radius: 6px;
+    margin-left: 4px;
+    opacity: 0.85;
+}
+.entry.series-card .series-toggle { display: inline-flex; align-items: center; justify-content: center; }
+.entry.series-card .series-toggle .chev { display: inline-block; width: 18px; height: 18px; transition: transform 0.18s ease; }
+.entry.series-card .series-toggle .chev path { fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linejoin: round; }
+.entry.series-card.expanded .series-toggle .chev { transform: rotate(180deg); }
+.entry.series-card.drag-over {
+    outline: 2px dashed var(--accent);
+}
+.series-items { width: 100%; padding: 0; }
+.series-items.hidden { display: none; }
+.entry.series-card .series-items.hidden { display: none; }
+.entry.series-item { background: rgba(140,150,200,0.10); }
+body.dark-mode .entry.series-item { background: rgba(110,120,200,0.12); }
+.entry.series-item:hover { background: rgba(140,150,200,0.16); }
+body.dark-mode .entry.series-item:hover { background: rgba(110,120,200,0.18); }
+.entry.series-item .series-remove {
+    margin-left: 10px;
+    border: none;
+    background: transparent;
+    color: inherit;
+    opacity: 0.85;
+    cursor: pointer;
+}
+.series-empty { opacity: 0.7; font-size: 12px; }
+
+/* Context menu for entry actions */
+.context-menu {
+    position: fixed;
+    z-index: 2000;
+    background: rgba(255,255,255,0.75);
+    -webkit-backdrop-filter: saturate(160%) blur(12px);
+    backdrop-filter: saturate(160%) blur(12px);
+    color: inherit;
+    border: 1px solid rgba(160,200,120,0.30);
+    border-radius: 8px;
+    min-width: 200px;
+    box-shadow:
+        inset 0 0 0 0.5px rgba(255,255,255,0.26),
+        0 8px 18px var(--glass-shadow);
+}
+body.dark-mode .context-menu { background: rgba(18,22,34,0.75); border-color: rgba(110,120,200,0.26); }
+.context-item { padding: 8px 10px; cursor: pointer; }
+.context-item:hover { background: rgba(255,255,255,0.10); }
+.context-item.disabled { opacity: 0.6; cursor: default; }
+.context-submenu { position: absolute; left: 100%; top: 0; margin-left: 6px; background: inherit; border: inherit; border-radius: 8px; }
+.context-submenu.hidden { display: none; }
+
 /* Removed legacy solid backgrounds to keep theme translucency */
 
 /* Remove solid gray hover in dark mode; keep translucent theme */
