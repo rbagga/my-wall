@@ -6,6 +6,7 @@
 
 html, body {
     min-height: 100vh;
+    overscroll-behavior: none;
 }
 
 body {
@@ -25,6 +26,10 @@ body {
     line-height: 1.6;
     transition: background 0.3s, color 0.3s;
 }
+
+/* Root background to avoid white during rubber-band overscroll */
+html { background-color: #fffdf2; }
+body.dark-mode html, html.dark-mode { background-color: #0a0f1a; }
 
 body.dark-mode {
     background:
@@ -306,9 +311,11 @@ body.dark-mode .entry.pinned {
     display: none;
     opacity: 0;
     transition: opacity 300ms ease;
+    background: inherit;
+    touch-action: none;
 }
 .home-view.show { display: block; opacity: 1; }
-.bubbles { position: absolute; inset: 0; overflow: hidden; }
+.bubbles { position: absolute; inset: 0; overflow: hidden; touch-action: none; }
 .bubbles { perspective: 900px; }
 .bubble {
     position: absolute;
@@ -1226,4 +1233,9 @@ body:not(.dark-mode) a.btn-liquid.clear:hover {
         inset 0 10px 24px rgba(255,255,255,0.10),
         0 0 0 1px rgba(160,200,255,0.50),
         0 12px 24px var(--glass-shadow);
+}
+/* On mobile/touch devices, avoid fixed backgrounds to prevent white flashes */
+@media (pointer: coarse), (max-width: 768px) {
+    body { background-attachment: scroll; }
+    body.dark-mode { background-attachment: scroll; }
 }

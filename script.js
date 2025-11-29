@@ -1199,10 +1199,15 @@ class WallApp {
 
     showHome() {
         this.isHome = true;
+        // Lock body scroll to prevent white overscroll
+        try { document.body.style.overflow = 'hidden'; } catch(_){}
+        // Prevent iOS rubber-band on overlay
+        this._blockTouchMove = (e) => { try { e.preventDefault(); } catch(_){} };
         // Hide wall content area
         this.dom.wall.innerHTML = '';
         if (this.dom.homeView) {
             this.dom.homeView.style.display = 'block';
+            try { this.dom.homeView.addEventListener('touchmove', this._blockTouchMove, { passive: false }); } catch(_){}
             requestAnimationFrame(() => this.dom.homeView.classList.add('show'));
         }
         // Hide entire header on home
@@ -1221,8 +1226,13 @@ class WallApp {
         this.isHome = false;
         this.stopBubblesPhysics();
         this.stopBubbleLighting();
+        try { document.body.style.overflow = ''; } catch(_){}
         if (this.dom.homeView) {
             this.dom.homeView.classList.remove('show');
+            if (this._blockTouchMove) {
+                try { this.dom.homeView.removeEventListener('touchmove', this._blockTouchMove, { passive: false }); } catch(_){}
+                this._blockTouchMove = null;
+            }
             setTimeout(() => { if (!this.isHome) this.dom.homeView.style.display = 'none'; }, 300);
         }
         if (this.dom.bubbles) this.dom.bubbles.innerHTML = '';
@@ -1323,14 +1333,15 @@ class WallApp {
             // trigger pop animation explicitly
             el.classList.add('pop');
             el.style.animation = 'pop 300ms ease forwards';
-            if (wall._virtual) {
-                // Navigate immediately; hashchange will handle hiding home
-                if (wall.slug === 'friend') location.hash = '#friend';
-                else if (wall.slug === 'tech') location.hash = '#tech';
-                else if (wall.slug === 'songs') location.hash = '#songs';
-                else if (wall.slug === 'ideas') location.hash = '#ideas';
-                else location.hash = '#';
-            } else {
+        if (wall._virtual) {
+            // Navigate immediately; hashchange will handle hiding home
+            if (wall.slug === 'rishu') location.hash = '#rishu';
+            else if (wall.slug === 'friend') location.hash = '#friend';
+            else if (wall.slug === 'tech') location.hash = '#tech';
+            else if (wall.slug === 'songs') location.hash = '#songs';
+            else if (wall.slug === 'ideas') location.hash = '#ideas';
+            else location.hash = '#';
+        } else {
                 this.selectedWall = { id: wall.id, slug: wall.slug, name: wall.name, is_public: !!wall.is_public };
                 this.saveSelectedWallState();
                 // Route explicitly to #rishu for clarity
@@ -1351,6 +1362,9 @@ class WallApp {
     getVirtualWalls() {
         // Always include the non-DB special views as bubbles
         const v = [];
+        // Add a virtual rishu bubble if DB hasn't returned one
+        const hasRishu = Array.isArray(this.walls) && this.walls.some(w => String((w.slug||'')).toLowerCase() === 'rishu');
+        if (!hasRishu) v.push({ _virtual: true, slug: 'rishu', name: "rishu's wall" });
         v.push({ _virtual: true, slug: 'friend', name: "friends' wall" });
         v.push({ _virtual: true, slug: 'tech', name: 'tech notes' });
         v.push({ _virtual: true, slug: 'songs', name: 'song quotes' });
@@ -1540,6 +1554,8 @@ class WallApp {
         const state = { mx: 0.5, my: 0.5, lastMove: performance.now(), raf: null };
         const root = this.dom.bubbles;
         if (!root) return;
+        const isTouch = ('ontouchstart' in window) || (navigator.maxTouchPoints > 0);
+        if (isTouch) { this._bubbleLight = null; return; }
         const apply = () => {
             const els = Array.from(root.querySelectorAll('.bubble')).filter(el => !el.classList.contains('util'));
             const angle = Math.atan2(state.my - 0.5, state.mx - 0.5) * 180 / Math.PI;
@@ -1569,7 +1585,6 @@ class WallApp {
             apply();
         };
         window.addEventListener('mousemove', onMove);
-        window.addEventListener('touchmove', onMove, { passive: true });
         // gentle drift when idle
         const drift = (t) => {
             const now = performance.now();
