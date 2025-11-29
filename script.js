@@ -4136,16 +4136,28 @@ class WallApp {
 
     applyThemeColorMeta(isDark) {
         try {
-            let meta = document.querySelector('meta[name="theme-color"][data-dynamic]');
-            if (!meta) {
-                meta = document.createElement('meta');
-                meta.setAttribute('name', 'theme-color');
-                meta.setAttribute('data-dynamic', '1');
-                document.head.appendChild(meta);
-            }
-            // Match our backgrounds
             const color = isDark ? '#0a0f1a' : '#fffdf2';
-            meta.setAttribute('content', color);
+            // Update all theme-color metas so mobile UIs pick the active one
+            const metas = Array.from(document.querySelectorAll('meta[name="theme-color"]'));
+            if (metas.length === 0) {
+                const m = document.createElement('meta');
+                m.setAttribute('name', 'theme-color');
+                document.head.appendChild(m);
+                metas.push(m);
+            }
+            metas.forEach(m => {
+                m.removeAttribute('media'); // avoid media-preferred override
+                m.setAttribute('content', color);
+                m.setAttribute('data-dynamic', '1');
+            });
+            // iOS Safari status bar style for PWA-like contexts
+            let ios = document.querySelector('meta[name="apple-mobile-web-app-status-bar-style"]');
+            if (!ios) {
+                ios = document.createElement('meta');
+                ios.setAttribute('name', 'apple-mobile-web-app-status-bar-style');
+                document.head.appendChild(ios);
+            }
+            ios.setAttribute('content', isDark ? 'black-translucent' : 'default');
         } catch (_) {}
     }
 }
