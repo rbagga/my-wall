@@ -1262,12 +1262,25 @@ class WallApp {
         const others = all.filter(w => w !== center);
 
         const centerEl = this.createBubble(center, true);
+        // Initial center position
+        const vw = window.innerWidth; const vh = window.innerHeight;
+        const cx = Math.max(20, vw/2 - 80);
+        const cy = Math.max(60, vh/2 - 80);
+        centerEl.style.left = cx + 'px';
+        centerEl.style.top = cy + 'px';
         root.appendChild(centerEl);
 
-        // Place others initially near the center, physics will handle movement
+        // Place others initially around a ring so they don't stack
+        const R0 = Math.min(vw, vh) * 0.22;
+        const N = others.length || 1;
         for (let i = 0; i < others.length; i++) {
             const w = others[i];
             const el = this.createBubble(w, false);
+            const ang = (i / N) * Math.PI * 2;
+            const px = Math.max(20, vw/2 + R0 * Math.cos(ang) - 60);
+            const py = Math.max(80, vh/2 + R0 * Math.sin(ang) - 60);
+            el.style.left = px + 'px';
+            el.style.top = py + 'px';
             root.appendChild(el);
         }
         // Start/update physics layout
