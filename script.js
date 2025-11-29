@@ -4120,6 +4120,7 @@ class WallApp {
         const isDark = this.dom.darkModeToggle.checked;
         document.body.classList.toggle('dark-mode', isDark);
         localStorage.setItem(CONFIG.STORAGE_KEYS.DARK_MODE, isDark);
+        this.applyThemeColorMeta(isDark);
     }
 
     applyDarkMode() {
@@ -4130,6 +4131,22 @@ class WallApp {
         }
         this.dom.darkModeToggle.checked = isDark;
         document.body.classList.toggle('dark-mode', isDark);
+        this.applyThemeColorMeta(isDark);
+    }
+
+    applyThemeColorMeta(isDark) {
+        try {
+            let meta = document.querySelector('meta[name="theme-color"][data-dynamic]');
+            if (!meta) {
+                meta = document.createElement('meta');
+                meta.setAttribute('name', 'theme-color');
+                meta.setAttribute('data-dynamic', '1');
+                document.head.appendChild(meta);
+            }
+            // Match our backgrounds
+            const color = isDark ? '#0a0f1a' : '#fffdf2';
+            meta.setAttribute('content', color);
+        } catch (_) {}
     }
 }
 

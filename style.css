@@ -4,10 +4,7 @@
     box-sizing: border-box;
 }
 
-html, body {
-    min-height: 100vh;
-    overscroll-behavior: none;
-}
+html, body { min-height: 100vh; overscroll-behavior: none; }
 
 body {
     font-family: "SUSE Mono", monospace;
@@ -41,6 +38,10 @@ body.dark-mode {
     background-size: 100% 100%;
     color: #e0e0e0;
 }
+
+/* Ensure safe-area background matches theme */
+html { background-color: #fffdf2; }
+@media (prefers-color-scheme: dark) { html { background-color: #0a0f1a; } }
 
 /* Ensure modal and header buttons match exactly across contexts */
 body.dark-mode .btn-liquid,
