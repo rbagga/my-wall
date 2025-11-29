@@ -67,19 +67,66 @@ function randomCode(len = 6) {
   return out;
 }
 
+function slugify(name = '') {
+  return String(name)
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .replace(/-{2,}/g, '-')
+    || 'wall';
+}
+
+async function getDefaultWallId() {
+  try {
+    const r = await supabase.from('walls').select('id').eq('slug', 'rishu').maybeSingle();
+    if (r && r.data && r.data.id) return r.data.id;
+  } catch (_) {}
+  return null;
+}
+
 async function entriesHandler(req, res, parts) {
   if (req.method === 'GET') {
     try {
-      // Prefer single filtered query (public or null visibility)
-      const q = await supabase
+      // Optional wall scoping
+      const url = new URL(req.url, 'http://local');
+      const wallId = url.searchParams.get('wall_id');
+      const wallSlug = url.searchParams.get('wall');
+      const pwd = url.searchParams.get('password');
+
+      let resolvedWallId = wallId;
+      if (!resolvedWallId && wallSlug) {
+        try {
+          const r = await supabase.from('walls').select('id').eq('slug', wallSlug).maybeSingle();
+          if (r.data && r.data.id) resolvedWallId = String(r.data.id);
+        } catch (_) {}
+      }
+
+      // If a specific wall is requested and it is private, require password
+      if (resolvedWallId) {
+        try {
+          const wr = await supabase.from('walls').select('is_public').eq('id', resolvedWallId).maybeSingle();
+          if (wr && wr.data && wr.data.is_public === false) {
+            if (pwd !== process.env.WALL_PASSWORD) {
+              return res.status(401).json({ error: 'Unauthorized' });
+            }
+          }
+        } catch (_) {}
+      }
+
+      // Build query dynamically to include wall filter when possible
+      let q2 = supabase
         .from('wall_entries')
         .select('*')
         .or('visibility.is.null,visibility.eq.public')
         .order('is_pinned', { ascending: false })
         .order('pin_order', { ascending: true, nullsFirst: false })
         .order('timestamp', { ascending: false });
-      if (!q.error) {
-        return res.status(200).json({ data: q.data });
+      if (resolvedWallId) {
+        try { q2 = q2.eq('wall_id', resolvedWallId); } catch (_) {}
+      }
+      const qres = await q2;
+      if (!qres.error) {
+        return res.status(200).json({ data: qres.data });
       }
       // Fallback path for environments without .or or column present
       const pub = await supabase
@@ -112,7 +159,10 @@ async function entriesHandler(req, res, parts) {
         return res.status(200).json({ data: sorted });
       }
       // Merge pub + null and sort client-side to emulate server ordering
-      const merged = [...(pub.data || []), ...(nul.data || [])];
+      let merged = [...(pub.data || []), ...(nul.data || [])];
+      if (resolvedWallId) {
+        merged = merged.filter(r => String(r.wall_id || '') === String(resolvedWallId));
+      }
       const seen = new Set();
       const unique = merged.filter(r => {
         const id = r && r.id;
@@ -139,13 +189,23 @@ async function entriesHandler(req, res, parts) {
   }
   if (req.method === 'POST') {
     try {
-      const { text, password, visibility, title } = req.body || {};
+      const { text, password, visibility, title, wall_id, wall } = req.body || {};
       if (password !== process.env.WALL_PASSWORD) {
         return res.status(401).json({ error: 'Invalid password' });
       }
+      let targetWallId = wall_id || null;
+      if (!targetWallId && wall) {
+        try {
+          const r = await supabase.from('walls').select('id').eq('slug', String(wall)).maybeSingle();
+          if (r.data && r.data.id) targetWallId = r.data.id;
+        } catch (_) {}
+      }
+      if (!targetWallId) {
+        targetWallId = await getDefaultWallId();
+      }
       const vis = visibility === 'draft' ? 'draft' : 'public';
       const cleanTitle = (typeof title === 'string' && title.trim().length > 0 && title.trim() !== '(optional)') ? title.trim() : null;
-      const row = { text, timestamp: new Date().toISOString(), visibility: vis, title: cleanTitle };
+      const row = { text, timestamp: new Date().toISOString(), visibility: vis, title: cleanTitle, wall_id: targetWallId };
       let ins = await supabase.from('wall_entries').insert([row]).select();
       if (ins.error) {
         if (vis !== 'public') {
@@ -161,6 +221,95 @@ async function entriesHandler(req, res, parts) {
         ins = fb;
       }
       return res.status(200).json({ data: ins.data[0] });
+    } catch (error) {
+      return res.status(500).json({ error: error.message });
+    }
+  }
+  return res.status(405).json({ error: 'Method not allowed' });
+}
+
+// Walls: list/create/delete walls for scoping wall_entries
+async function wallsHandler(req, res) {
+  if (req.method === 'GET') {
+    try {
+      const url = new URL(req.url, 'http://local');
+      const pwd = url.searchParams.get('password');
+      const selectCols = 'id, name, slug, created_at, is_public';
+      let q = supabase.from('walls').select(selectCols).order('created_at', { ascending: false });
+      if (pwd !== process.env.WALL_PASSWORD) {
+        try { q = q.eq('is_public', true); } catch (_) {}
+      }
+      q = await q;
+      if (q.error) {
+        // Table missing: return default virtual wall
+        if (String(q.error.code) === '42P01') return res.status(200).json({ data: [] });
+        throw q.error;
+      }
+      return res.status(200).json({ data: q.data || [] });
+    } catch (error) {
+      return res.status(500).json({ error: error.message });
+    }
+  }
+  if (req.method === 'POST') {
+    try {
+      const { name, password, is_public } = req.body || {};
+      if (password !== process.env.WALL_PASSWORD) return res.status(401).json({ error: 'Invalid password' });
+      if (!name || !String(name).trim()) return res.status(400).json({ error: 'Name is required' });
+      const base = slugify(String(name).trim());
+      let s = base;
+      // ensure unique slug by retrying with suffix up to a few times
+      for (let i = 0; i < 10; i++) {
+        const check = await supabase.from('walls').select('id').eq('slug', s).maybeSingle();
+        if (!check.data) break;
+        s = `${base}-${i+2}`; // base, base-2, base-3, ...
+      }
+      const payload = { name: String(name).trim(), slug: s };
+      if (typeof is_public === 'boolean') payload.is_public = is_public;
+      const ins = await supabase.from('walls').insert([payload]).select();
+      if (ins.error) throw ins.error;
+      return res.status(200).json({ data: ins.data && ins.data[0] });
+    } catch (error) {
+      return res.status(500).json({ error: error.message });
+    }
+  }
+  if (req.method === 'PATCH' || (req.method === 'POST' && req.body && req.body._action === 'update')) {
+    try {
+      const { id, name, is_public, password } = req.body || {};
+      if (!id) return res.status(400).json({ error: 'Missing id' });
+      if (password !== process.env.WALL_PASSWORD) return res.status(401).json({ error: 'Invalid password' });
+      const update = {};
+      if (typeof name === 'string') {
+        const clean = name.trim();
+        if (!clean) return res.status(400).json({ error: 'Name cannot be empty' });
+        update.name = clean;
+      }
+      if (typeof is_public === 'boolean') update.is_public = is_public;
+      if (!Object.keys(update).length) return res.status(400).json({ error: 'No changes provided' });
+      const up = await supabase.from('walls').update(update).eq('id', id).select();
+      if (up.error) throw up.error;
+      return res.status(200).json({ data: up.data && up.data[0] });
+    } catch (error) {
+      return res.status(500).json({ error: error.message });
+    }
+  }
+  if (req.method === 'DELETE' || (req.method === 'POST' && req.body && req.body._action === 'delete')) {
+    try {
+      const url = new URL(req.url, 'http://local');
+      const id = (req.body && req.body.id) || url.searchParams.get('id');
+      const password = (req.body && req.body.password) || url.searchParams.get('password');
+      if (!id) return res.status(400).json({ error: 'Missing id' });
+      if (password !== process.env.WALL_PASSWORD) return res.status(401).json({ error: 'Invalid password' });
+      // Prevent deleting default rishu wall by slug
+      const w = await supabase.from('walls').select('id, slug').eq('id', id).maybeSingle();
+      if (w.error) throw w.error;
+      if (!w.data) return res.status(404).json({ error: 'Not found' });
+      if ((w.data.slug || '').toLowerCase() === 'rishu') return res.status(400).json({ error: "Cannot delete the default wall" });
+      // Delete wall entries first, then wall
+      const delEntries = await supabase.from('wall_entries').delete().eq('wall_id', id);
+      if (delEntries.error) throw delEntries.error;
+      const delWall = await supabase.from('walls').delete().eq('id', id);
+      if (delWall.error) throw delWall.error;
+      return res.status(200).json({ ok: true });
     } catch (error) {
       return res.status(500).json({ error: error.message });
     }
@@ -528,13 +677,19 @@ async function verifyPasswordHandler(req, res) {
 async function draftsHandler(req, res) {
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
   try {
-    const { password } = req.body || {};
+    const { password, wall_id, wall } = req.body || {};
     if (password !== process.env.WALL_PASSWORD) return res.status(401).json({ error: 'Invalid password' });
-    const { data, error } = await supabase
-      .from('wall_entries')
-      .select('*')
-      .eq('visibility', 'draft')
-      .order('timestamp', { ascending: false });
+    let targetWallId = wall_id || null;
+    if (!targetWallId && wall) {
+      try {
+        const r = await supabase.from('walls').select('id').eq('slug', wall).maybeSingle();
+        if (r.data && r.data.id) targetWallId = r.data.id;
+      } catch (_) {}
+    }
+    if (!targetWallId) targetWallId = await getDefaultWallId();
+    let q = supabase.from('wall_entries').select('*').eq('visibility', 'draft').order('timestamp', { ascending: false });
+    if (targetWallId) { try { q = q.eq('wall_id', targetWallId); } catch (_) {} }
+    const { data, error } = await q;
     if (error) throw error;
     return res.status(200).json({ data });
   } catch (error) {
@@ -1074,6 +1229,7 @@ module.exports = async function handler(req, res) {
   // Route compatibility: support existing endpoints
   try {
     if (head === 'entries') return entriesHandler(req, res, parts);
+    if (head === 'walls') return wallsHandler(req, res);
     if (head === 'update-entry') return updateEntryHandler(req, res);
     if (head === 'delete-entry') return deleteEntryHandler(req, res);
     if (head === 'pin-entry') return pinEntryHandler(req, res);

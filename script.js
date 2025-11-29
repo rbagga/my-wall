@@ -6,13 +6,16 @@ class WallApp {
         this.entries = [];
         this.isAuthenticated = false;
         this.dom = {};
-        this.currentWall = 'rishu'; // 'rishu', 'friend', 'tech', 'songs', 'ideas', or 'drafts'
+        this.currentWall = 'rishu'; // view context: 'rishu', 'friend', 'tech', 'songs', 'ideas', or 'drafts'
+        this.walls = [];
+        this.selectedWall = null; // { id, slug, name }
         this.entriesCache = { rishu: null, friend: null, tech: null, songs: null, ideas: null, drafts: null };
         this.series = [];
         this.seriesLoaded = false;
         this.seriesItemsCache = new Map(); // key: seriesId -> items array
         this.spotifyCache = new Map();
         this.spotifyEmbedCache = new Map();
+        this.videoMetaCache = new Map(); // url -> { title, thumbnail_url }
         this._dragImg = null; // legacy HTML5 DnD ghost suppressor (no longer used)
         this._mouseDrag = { active: false, el: null };
         this._dragIntent = null; // pending drag start info (click-vs-drag threshold)
@@ -21,6 +24,161 @@ class WallApp {
         this._activeForm = null; // reference to the active modal form, if any
 
         this.init();
+    }
+
+    isVideoWall() {
+        const slug = (this.selectedWall && this.selectedWall.slug) ? String(this.selectedWall.slug).toLowerCase() : '';
+        const name = (this.selectedWall && this.selectedWall.name) ? String(this.selectedWall.name).toLowerCase() : '';
+        if (!slug && !name) return false;
+        // Enable for a specific wall or any wall containing "video" in name
+        return slug === 'enlightening-videos' || name.includes('video');
+    }
+
+    extractFirstUrl(text) {
+        if (!text) return null;
+        const re = /https?:\/\/[^\s<]+/i;
+        const m = String(text).match(re);
+        return m ? m[0] : null;
+    }
+
+    async fetchVideoMeta(url) {
+        try {
+            const u = String(url || '').trim();
+            if (!u) return null;
+            if (this.videoMetaCache.has(u)) return this.videoMetaCache.get(u);
+            let endpoint = null;
+            const lower = u.toLowerCase();
+            if (lower.includes('youtube.com') || lower.includes('youtu.be')) {
+                endpoint = `https://www.youtube.com/oembed?url=${encodeURIComponent(u)}&format=json`;
+            } else if (lower.includes('vimeo.com')) {
+                endpoint = `https://vimeo.com/api/oembed.json?url=${encodeURIComponent(u)}`;
+            } else if (lower.includes('dailymotion.com') || lower.includes('dai.ly')) {
+                endpoint = `https://www.dailymotion.com/services/oembed?url=${encodeURIComponent(u)}`;
+            }
+            let meta = null;
+            if (endpoint) {
+                try {
+                    const resp = await fetch(endpoint);
+                    const data = await resp.json().catch(() => ({}));
+                    meta = { title: data.title || '', thumbnail_url: data.thumbnail_url || data.thumbnail_url_with_play_button || '' };
+                } catch (_) {
+                    meta = null;
+                }
+            }
+            // Fallback: derive title from URL
+            if (!meta) {
+                const t = u.replace(/^https?:\/\/([^/]+).*/, '$1');
+                meta = { title: t, thumbnail_url: '' };
+            }
+            this.videoMetaCache.set(u, meta);
+            return meta;
+        } catch (_) {
+            return null;
+        }
+    }
+
+    extractVideoInfo(url) {
+        try {
+            const u = new URL(url);
+            const host = u.hostname.toLowerCase();
+            // YouTube
+            if (host.includes('youtube.com')) {
+                // Handle watch?v=ID
+                let id = u.searchParams.get('v');
+                // Handle /embed/ID
+                if (!id && /\/embed\//.test(u.pathname)) {
+                    id = u.pathname.split('/').filter(Boolean).pop();
+                }
+                if (id) return { provider: 'youtube', id };
+            } else if (host === 'youtu.be') {
+                const id = u.pathname.replace(/^\//, '');
+                if (id) return { provider: 'youtube', id };
+            }
+            // Vimeo
+            if (host.includes('vimeo.com')) {
+                const parts = u.pathname.split('/').filter(Boolean);
+                const id = parts[0];
+                if (id && /^\d+$/.test(id)) return { provider: 'vimeo', id };
+            }
+            // Dailymotion
+            if (host.includes('dailymotion.com')) {
+                const parts = u.pathname.split('/').filter(Boolean);
+                const i = parts.indexOf('video');
+                if (i !== -1 && parts[i+1]) return { provider: 'dailymotion', id: parts[i+1] };
+            }
+            if (host === 'dai.ly') {
+                const id = u.pathname.replace(/^\//, '');
+                if (id) return { provider: 'dailymotion', id };
+            }
+        } catch (_) {}
+        return { provider: null, id: null };
+    }
+
+    getVideoEmbedSrc(url) {
+        const info = this.extractVideoInfo(url);
+        if (info.provider === 'youtube' && info.id) return `https://www.youtube.com/embed/${encodeURIComponent(info.id)}`;
+        if (info.provider === 'vimeo' && info.id) return `https://player.vimeo.com/video/${encodeURIComponent(info.id)}`;
+        if (info.provider === 'dailymotion' && info.id) return `https://www.dailymotion.com/embed/video/${encodeURIComponent(info.id)}`;
+        return null;
+    }
+
+    showVideoModal(entry) {
+        const url = this.extractFirstUrl(entry && entry.text ? entry.text : '');
+        if (!url) { this.showEntry(entry); return; }
+        const wrap = document.createElement('div');
+        wrap.className = 'entry-form';
+        const titleText = (entry && entry.title && entry.title.trim()) ? entry.title.trim() : 'Video';
+        const embedSrc = this.getVideoEmbedSrc(url);
+        const openA = `<a href="${this.escapeHtml(url)}" target="_blank" rel="noopener noreferrer">Open on provider</a>`;
+        wrap.innerHTML = `
+            <h3>${this.escapeHtml(titleText)}</h3>
+            <div class="video-frame">${embedSrc ? `<iframe src="${this.escapeHtml(embedSrc)}" allowfullscreen loading="lazy" referrerpolicy="no-referrer-when-downgrade"></iframe>` : ''}</div>
+            <div class="video-meta">${openA}</div>
+            <div class="modal-actions"><div></div><div class="actions-center"></div><div class="actions-right"></div></div>
+        `;
+        this.dom.modalBody.innerHTML = '';
+        this.dom.modalBody.appendChild(wrap);
+        this._modalContext = 'video-view';
+        this._activeForm = null;
+        this.openModal();
+        // Add share button (center)
+        const actionsCenter = this.dom.modalBody.querySelector('.modal-actions .actions-center');
+        if (actionsCenter && entry && entry.id) {
+            const shareBtn = document.createElement('button');
+            shareBtn.type = 'button';
+            shareBtn.className = 'icon-btn btn-liquid clear';
+            shareBtn.title = 'Share link';
+            shareBtn.setAttribute('aria-label', 'Share link');
+            shareBtn.innerHTML = `
+                <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true">
+                  <path d="M12 13V6" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
+                  <path d="M9 9l3-3 3 3" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+                  <rect x="5" y="14" width="14" height="5" rx="2.5" ry="2.5" fill="none" stroke="currentColor" stroke-width="1.6"/>
+                </svg>`;
+            shareBtn.addEventListener('click', async () => {
+                this.showShareLoading();
+                try {
+                    // rishu wall entries use entryId shortener; videos live on rishu wall
+                    const { shortUrl } = await this.createShortLink(entry.id, 'rishu');
+                    this.showShareModal(shortUrl);
+                } catch (e) {
+                    const msg = String(e && e.message) || '';
+                    if (/Short links require DB migration/i.test(msg)) this.showShareError('Short links require DB migration. Please run supabase db push.');
+                    else if (/External shortener failed/i.test(msg)) this.showShareError('Short-link service unavailable. Please try again.');
+                    else this.showShareError('Failed to create link. Please try again.');
+                }
+            });
+            actionsCenter.appendChild(shareBtn);
+        }
+        // If title missing, try to update it after oEmbed
+        if (!entry.title || !entry.title.trim()) {
+            this.fetchVideoMeta(url).then(meta => {
+                if (meta && meta.title) {
+                    const h3 = this.dom.modalBody.querySelector('h3');
+                    if (h3) h3.textContent = meta.title;
+                }
+            }).catch(()=>{});
+        }
     }
 
     init() {
@@ -32,6 +190,8 @@ class WallApp {
         this.dom.closeBtn = document.getElementById('closeBtn');
         this.dom.darkModeToggle = document.getElementById('darkModeToggle');
         this.dom.toggleWallButton = document.getElementById('toggleWallButton');
+        this.dom.wallsNav = document.getElementById('wallsNav');
+        this.dom.addWallButton = document.getElementById('addWallButton');
         this.dom.wallTitle = document.getElementById('wallTitle');
         this.dom.draftsButton = document.getElementById('draftsButton');
         this.dom.techButton = document.getElementById('techButton');
@@ -41,6 +201,7 @@ class WallApp {
 
         // Load data
         this.loadAuthState();
+        this.loadSelectedWallState();
         this.updateAuthUI();
 
         // Set up event listeners
@@ -55,6 +216,17 @@ class WallApp {
 
         // Prepare transparent drag image (kept for compatibility but not used now)
         this._dragImg = this.createTransparentDragImage();
+
+        // Load walls list (non-blocking)
+        this.fetchWalls().then(() => {
+            if (!this.selectedWall) this.selectInitialWall();
+            this.updateWallTitle();
+            this.renderWallButtons();
+            if (this.currentWall === 'rishu') { this.entriesCache.rishu = null; this.loadEntries(); }
+        }).catch(() => {
+            this.updateWallTitle();
+            this.renderWallButtons();
+        });
     }
 
     showLoading() {
@@ -80,6 +252,25 @@ class WallApp {
         this.tempPassword = this.isAuthenticated ? pwd : null;
     }
 
+    loadSelectedWallState() {
+        const id = localStorage.getItem(CONFIG.STORAGE_KEYS.SELECTED_WALL_ID);
+        const slug = localStorage.getItem(CONFIG.STORAGE_KEYS.SELECTED_WALL_SLUG);
+        const name = localStorage.getItem(CONFIG.STORAGE_KEYS.SELECTED_WALL_NAME);
+        if (id && name) this.selectedWall = { id, slug: slug || null, name };
+    }
+
+    saveSelectedWallState() {
+        if (this.selectedWall) {
+            localStorage.setItem(CONFIG.STORAGE_KEYS.SELECTED_WALL_ID, String(this.selectedWall.id));
+            localStorage.setItem(CONFIG.STORAGE_KEYS.SELECTED_WALL_SLUG, this.selectedWall.slug || '');
+            localStorage.setItem(CONFIG.STORAGE_KEYS.SELECTED_WALL_NAME, this.selectedWall.name || '');
+        } else {
+            localStorage.removeItem(CONFIG.STORAGE_KEYS.SELECTED_WALL_ID);
+            localStorage.removeItem(CONFIG.STORAGE_KEYS.SELECTED_WALL_SLUG);
+            localStorage.removeItem(CONFIG.STORAGE_KEYS.SELECTED_WALL_NAME);
+        }
+    }
+
     updateAuthUI() {
         if (this.dom && this.dom.draftsButton) {
             const onDrafts = this.currentWall === 'drafts';
@@ -88,6 +279,9 @@ class WallApp {
         if (this.dom && this.dom.ideasButton) {
             const onIdeas = this.currentWall === 'ideas';
             this.dom.ideasButton.style.display = this.isAuthenticated && !onIdeas ? 'inline-block' : 'none';
+        }
+        if (this.dom && this.dom.addWallButton) {
+            this.dom.addWallButton.style.display = this.isAuthenticated ? 'inline-block' : 'none';
         }
     }
 
@@ -118,7 +312,7 @@ class WallApp {
                 const response = await fetch('/api/drafts', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ password: this.tempPassword })
+                    body: JSON.stringify({ password: this.tempPassword, wall_id: (this.selectedWall && this.selectedWall.id) ? this.selectedWall.id : undefined })
                 });
                 const result = await response.json().catch(() => ({}));
                 if (!response.ok) {
@@ -170,7 +364,15 @@ class WallApp {
             if (wallKey === 'friend') endpoint = '/api/friend-entries';
             else if (wallKey === 'tech') endpoint = '/api/tech-notes';
             else if (wallKey === 'songs') endpoint = '/api/song-quotes';
-            const response = await fetch(endpoint);
+            const url = new URL(endpoint, location.origin);
+            if (wallKey === 'rishu' && this.selectedWall && this.selectedWall.id) {
+                url.searchParams.set('wall_id', String(this.selectedWall.id));
+                // Supply password for private walls
+                if (!this.selectedWall.is_public && this.tempPassword) {
+                    url.searchParams.set('password', this.tempPassword);
+                }
+            }
+            const response = await fetch(url.toString());
             const result = await response.json();
 
             if (!response.ok) throw new Error(result.error);
@@ -207,7 +409,8 @@ class WallApp {
                     text: text,
                     password: password,
                     visibility,
-                    title: (typeof title === 'string' && title.trim() && title.trim() !== '(optional)') ? title.trim() : undefined
+                    title: (typeof title === 'string' && title.trim() && title.trim() !== '(optional)') ? title.trim() : undefined,
+                    wall_id: (this.selectedWall && this.selectedWall.id) ? this.selectedWall.id : undefined
                 })
             });
 
@@ -241,6 +444,11 @@ class WallApp {
 
         // Toggle wall button
         this.dom.toggleWallButton.addEventListener('click', () => this.toggleWall());
+
+        // Add wall button
+        if (this.dom.addWallButton) {
+            this.dom.addWallButton.addEventListener('click', () => this.handleAddWallClick());
+        }
 
         // Drafts button (shown only when authenticated)
         if (this.dom.draftsButton) {
@@ -287,6 +495,527 @@ class WallApp {
             const menu = document.getElementById('entryContextMenu');
             if (menu && !menu.contains(e.target)) menu.remove();
         });
+
+        // Title context menu for wall actions (right-click)
+        this.dom.wallTitle.addEventListener('contextmenu', (e) => {
+            try { e.preventDefault(); } catch(_) {}
+            try { e.stopPropagation(); } catch(_) {}
+            const canDelete = !!(this.isAuthenticated && this.currentWall === 'rishu' && this.selectedWall && (String((this.selectedWall.slug || '')).toLowerCase() !== 'rishu'));
+            this.showWallTitleContextMenu(e.clientX, e.clientY, canDelete);
+        }, { capture: true });
+    }
+
+    updateWallTitle() {
+        if (this.currentWall !== 'rishu') return;
+        const sel = this.selectedWall;
+        if (!sel) {
+            this.dom.wallTitle.textContent = "rishu's wall";
+            this.dom.wallTitle.style.cursor = '';
+            this.dom.wallTitle.removeAttribute('title');
+            return;
+        }
+        const slug = (sel.slug || '').toLowerCase();
+        const name = (sel.name || '').trim();
+        if (slug === 'rishu' || name.toLowerCase() === 'rishu') {
+            this.dom.wallTitle.textContent = "rishu's wall";
+            this.dom.wallTitle.style.cursor = '';
+            this.dom.wallTitle.removeAttribute('title');
+        } else {
+            this.dom.wallTitle.textContent = name || "rishu's wall";
+            // Keep default cursor; deletion is via right-click context menu only
+            this.dom.wallTitle.style.cursor = '';
+            this.dom.wallTitle.removeAttribute('title');
+        }
+    }
+
+    selectInitialWall() {
+        if (this.walls && this.walls.length) {
+            const def = this.walls.find(w => (String(w.slug || '')).toLowerCase() === 'rishu') || this.walls[0];
+            this.selectedWall = { id: def.id, slug: def.slug, name: def.name, is_public: !!def.is_public };
+            this.saveSelectedWallState();
+        }
+    }
+
+    async fetchWalls() {
+        try {
+            const url = new URL('/api/walls', location.origin);
+            if (this.isAuthenticated && this.tempPassword) url.searchParams.set('password', this.tempPassword);
+            const resp = await fetch(url.toString());
+            const result = await resp.json().catch(() => ({}));
+            if (resp.ok) {
+                this.walls = Array.isArray(result.data) ? result.data : [];
+                if (this.selectedWall && this.walls.length) {
+                    const found = this.walls.find(w => String(w.id) === String(this.selectedWall.id));
+                    if (found) this.selectedWall = { id: found.id, slug: found.slug, name: found.name, is_public: !!found.is_public };
+                    this.saveSelectedWallState();
+                }
+            } else {
+                this.walls = [];
+            }
+        } catch (_) {
+            this.walls = [];
+        }
+    }
+
+    renderWallButtons() {
+        if (!this.dom.wallsNav) return;
+        const wrap = this.dom.wallsNav;
+        wrap.innerHTML = '';
+        const list = (Array.isArray(this.walls) ? this.walls : []).filter(w => w && (w.is_public || this.isAuthenticated));
+        list.forEach(w => {
+            const btn = document.createElement('button');
+            btn.className = 'toggle-wall-button btn-liquid clear';
+            btn.type = 'button';
+            const isRishu = String((w.slug || '').toLowerCase()) === 'rishu' || String((w.name || '').toLowerCase()) === 'rishu';
+            btn.textContent = isRishu ? "rishu's wall" : w.name;
+            if (this.selectedWall && String(this.selectedWall.id) === String(w.id)) {
+                btn.classList.add('active');
+            }
+            btn.addEventListener('click', () => {
+                if (!w.is_public && !this.isAuthenticated) { this.showPasswordForm(); return; }
+                this.selectedWall = { id: w.id, slug: w.slug, name: w.name, is_public: w.is_public };
+                this.saveSelectedWallState();
+                this.updateWallTitle();
+                this.entriesCache.rishu = null;
+                this.entriesCache.drafts = null;
+                this.renderWallButtons();
+                if (this.currentWall !== 'rishu') {
+                    location.hash = '#';
+                } else {
+                    this.loadEntries();
+                }
+            });
+            wrap.appendChild(btn);
+        });
+    }
+
+    async handleAddWallClick() {
+        if (!this.isAuthenticated) { this.showPasswordForm(); return; }
+        this.showCreateWallModal();
+    }
+
+    showCreateWallModal() {
+        const form = document.createElement('form');
+        form.className = 'entry-form';
+        form.innerHTML = `
+            <h3>Create Wall</h3>
+            <input type="text" id="wallName" placeholder="Wall name" required>
+            <label style="display:flex; align-items:center; gap:8px; margin:6px 0;">
+                <input type="checkbox" id="wallPublic" checked>
+                <span>Public (visible to everyone)</span>
+            </label>
+            <div style="display:flex; gap:8px; align-items:center;">
+                <button type="submit" class="btn-liquid clear">Create</button>
+            </div>
+        `;
+        this.dom.modalBody.innerHTML = '';
+        this.dom.modalBody.appendChild(form);
+        this._modalContext = 'create-wall';
+        this._activeForm = form;
+
+        form.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            if (form.classList.contains('is-submitting')) return;
+            const nameEl = form.querySelector('#wallName');
+            const pubEl = form.querySelector('#wallPublic');
+            const name = (nameEl.value || '').trim();
+            const is_public = !!pubEl.checked;
+            if (!name) { nameEl.focus(); return; }
+            form.classList.add('is-submitting');
+            try {
+                const resp = await fetch('/api/walls', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ name, is_public, password: this.tempPassword })
+                });
+                const result = await resp.json().catch(() => ({}));
+                if (!resp.ok) {
+                    alert(result && result.error ? String(result.error) : 'Failed to create wall');
+                    form.classList.remove('is-submitting');
+                    return;
+                }
+                const created = result.data;
+                await this.fetchWalls();
+                const w = this.walls.find(x => String(x.id) === String(created.id));
+                if (w) {
+                    this.selectedWall = { id: w.id, slug: w.slug, name: w.name, is_public: w.is_public };
+                    this.saveSelectedWallState();
+                    this.updateWallTitle();
+                    this.entriesCache.rishu = null;
+                    this.entriesCache.drafts = null;
+                    this.renderWallButtons();
+                    this.closeModal();
+                    if (this.currentWall !== 'rishu') location.hash = '#';
+                    else this.loadEntries();
+                }
+            } catch (_) {
+                alert('Failed to create wall.');
+            } finally {
+                form.classList.remove('is-submitting');
+            }
+        });
+
+        this.openModal();
+        setTimeout(() => form.querySelector('#wallName')?.focus(), 50);
+    }
+
+    showVideoEntryForm() {
+        const form = document.createElement('form');
+        form.className = 'entry-form';
+        form.innerHTML = `
+            <h3>Add Video</h3>
+            <input type="url" id="videoUrl" placeholder="Paste video URL (YouTube, Vimeo…)" required>
+            <div style="display:flex; gap:8px; align-items:center;">
+                <button type="submit" class="btn-liquid clear">Add</button>
+            </div>
+        `;
+        this.dom.modalBody.innerHTML = '';
+        this.dom.modalBody.appendChild(form);
+        this._modalContext = 'video-entry';
+        this._activeForm = form;
+
+        form.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            if (form.classList.contains('is-submitting')) return;
+            const urlEl = form.querySelector('#videoUrl');
+            const url = (urlEl.value || '').trim();
+            if (!url) { urlEl.focus(); return; }
+            form.classList.add('is-submitting');
+            try {
+                let title = null;
+                try { const meta = await this.fetchVideoMeta(url); title = meta && meta.title ? meta.title : null; } catch(_) {}
+                const created = await this.saveEntry(url, this.tempPassword, 'public', title);
+                // Optimistically add to cache
+                const cur = Array.isArray(this.entriesCache.rishu) ? this.entriesCache.rishu : [];
+                this.entriesCache.rishu = [created, ...cur];
+                if (this.currentWall === 'rishu') { this.entries = this.entriesCache.rishu; this.renderEntries(); }
+                this.closeModal();
+            } catch (err) {
+                const msg = String(err && err.message) || '';
+                if (msg === 'Invalid password') { this.tempPassword = null; alert('Invalid password. Please try again.'); this.closeModal(); }
+                else alert('Error adding video.');
+            } finally {
+                form.classList.remove('is-submitting');
+            }
+        });
+
+        this.openModal();
+        setTimeout(() => form.querySelector('#videoUrl')?.focus(), 50);
+    }
+
+    showWallsModal() {
+        const container = document.createElement('div');
+        container.className = 'entry-modal';
+        const list = (this.walls || []);
+        const currentId = this.selectedWall ? String(this.selectedWall.id) : '';
+        const items = list.map(w => {
+            const sel = String(w.id) === currentId ? ' (current)' : '';
+            return `<li data-id="${String(w.id)}" class="wall-item">${this.escapeHtml(w.name)}${sel}</li>`;
+        }).join('');
+        container.innerHTML = `
+            <div class="entry">
+              <div class="entry-title">Switch wall</div>
+              <ul class="walls-list" style="list-style:none; padding-left:0; margin:8px 0;">
+                ${items || '<li class="wall-item" data-empty="1">No walls yet</li>'}
+              </ul>
+              <div style="display:flex; gap:8px;">
+                <input type="text" id="newWallName" placeholder="New wall name" style="flex:1;" />
+                <button type="button" id="createWallBtn" class="btn-liquid clear">Create</button>
+              </div>
+            </div>
+        `;
+        this.dom.modalBody.innerHTML = '';
+        this.dom.modalBody.appendChild(container);
+        this._modalContext = 'walls-list';
+        this._activeForm = null;
+
+        container.querySelectorAll('.wall-item').forEach(el => {
+            if (el.getAttribute('data-empty') === '1') return;
+            el.style.cursor = 'pointer';
+            el.addEventListener('click', () => {
+                const id = el.getAttribute('data-id');
+                const w = this.walls.find(x => String(x.id) === String(id));
+                if (w) {
+                    this.selectedWall = { id: w.id, slug: w.slug, name: w.name };
+                    this.saveSelectedWallState();
+                    this.updateWallTitle();
+                    this.entriesCache.rishu = null;
+                    this.entriesCache.drafts = null;
+                    this.closeModal();
+                    this.loadEntries();
+                }
+            });
+        });
+
+        const btn = container.querySelector('#createWallBtn');
+        const input = container.querySelector('#newWallName');
+        btn.addEventListener('click', async () => {
+            const name = (input.value || '').trim();
+            if (!name) { input.focus(); return; }
+            if (!this.isAuthenticated) { this.showPasswordForm(); return; }
+            try {
+                const resp = await fetch('/api/walls', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ name, password: this.tempPassword })
+                });
+                const result = await resp.json().catch(() => ({}));
+                if (!resp.ok) {
+                    const msg = result && result.error ? String(result.error) : 'Failed to create wall';
+                    alert(msg);
+                    return;
+                }
+                const created = result.data;
+                await this.fetchWalls();
+                const w = this.walls.find(x => String(x.id) === String(created.id));
+                if (w) {
+                    this.selectedWall = { id: w.id, slug: w.slug, name: w.name };
+                    this.saveSelectedWallState();
+                    this.updateWallTitle();
+                    this.entriesCache.rishu = null;
+                    this.entriesCache.drafts = null;
+                    this.closeModal();
+                    this.loadEntries();
+                }
+            } catch (e) {
+                alert('Failed to create wall.');
+            }
+        });
+
+        this.openModal();
+        setTimeout(() => input?.focus(), 50);
+    }
+
+    showDeleteWallConfirm() {
+        const menu = document.getElementById('entryContextMenu');
+        if (menu) menu.remove();
+
+        const form = document.createElement('form');
+        form.className = 'entry-form';
+        const name = this.selectedWall?.name || 'this wall';
+        form.innerHTML = `
+            <h3>Delete Wall</h3>
+            <div class="entry-text">Type \"delete me\" to confirm deleting ${this.escapeHtml(name)} and all its notes.</div>
+            <div class="delete-confirm">
+              <small>Confirmation</small>
+              <div class="confirm-row">
+                <input type="text" class="confirm-input" placeholder="delete me" />
+                <button type="button" class="btn-liquid danger clear confirm-btn" disabled>Delete</button>
+              </div>
+            </div>
+        `;
+        this.dom.modalBody.innerHTML = '';
+        this.dom.modalBody.appendChild(form);
+        this._modalContext = 'delete-wall';
+        this._activeForm = form;
+
+        const input = form.querySelector('.confirm-input');
+        const btn = form.querySelector('.confirm-btn');
+        input.addEventListener('input', () => {
+            btn.disabled = !(String(input.value || '').trim().toLowerCase() === 'delete me');
+        });
+        btn.addEventListener('click', async () => {
+            btn.disabled = true;
+            try {
+                const id = this.selectedWall?.id;
+                if (!id) return;
+                const resp = await fetch(`/api/walls?id=${encodeURIComponent(id)}`, {
+                    method: 'DELETE',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ password: this.tempPassword })
+                });
+                const result = await resp.json().catch(() => ({}));
+                if (!resp.ok) {
+                    alert(result && result.error ? String(result.error) : 'Failed to delete wall');
+                    btn.disabled = false;
+                    return;
+                }
+                await this.fetchWalls();
+                this.selectInitialWall();
+                this.saveSelectedWallState();
+                this.updateWallTitle();
+                this.entriesCache.rishu = null;
+                this.entriesCache.drafts = null;
+                this.renderWallButtons();
+                this.closeModal();
+                if (this.currentWall !== 'rishu') location.hash = '#';
+                else this.loadEntries();
+            } catch (_) {
+                alert('Failed to delete wall.');
+                btn.disabled = false;
+            }
+        });
+
+        this.openModal();
+        setTimeout(() => input?.focus(), 50);
+    }
+
+    showWallTitleContextMenu(x, y, canDelete) {
+        // Remove any existing context menu
+        const old = document.getElementById('entryContextMenu');
+        if (old) old.remove();
+        const wrap = document.createElement('div');
+        wrap.id = 'entryContextMenu';
+        wrap.className = 'context-menu';
+        wrap.style.left = x + 'px';
+        wrap.style.top = y + 'px';
+
+        if (canDelete) {
+            const rename = document.createElement('div');
+            rename.className = 'context-item';
+            rename.textContent = 'Rename wall…';
+            rename.addEventListener('click', (ev) => {
+                ev.stopPropagation();
+                wrap.remove();
+                this.showRenameWallModal();
+            });
+            wrap.appendChild(rename);
+
+            // Toggle visibility
+            const isPublic = !!(this.selectedWall && this.selectedWall.is_public);
+            const vis = document.createElement('div');
+            vis.className = 'context-item';
+            vis.textContent = isPublic ? 'Make private…' : 'Make public…';
+            vis.addEventListener('click', (ev) => {
+                ev.stopPropagation();
+                wrap.remove();
+                this.showWallVisibilityModal();
+            });
+            wrap.appendChild(vis);
+
+            const del = document.createElement('div');
+            del.className = 'context-item';
+            del.textContent = 'Delete wall…';
+            del.addEventListener('click', (ev) => {
+                ev.stopPropagation();
+                wrap.remove();
+                this.showDeleteWallConfirm();
+            });
+            wrap.appendChild(del);
+        } else {
+            const no = document.createElement('div');
+            no.className = 'context-item disabled';
+            no.textContent = 'No actions available';
+            wrap.appendChild(no);
+        }
+        document.body.appendChild(wrap);
+    }
+
+    showRenameWallModal() {
+        const form = document.createElement('form');
+        form.className = 'entry-form';
+        const current = (this.selectedWall && this.selectedWall.name) ? this.selectedWall.name : '';
+        form.innerHTML = `
+            <h3>Rename Wall</h3>
+            <input type="text" id="renameWallName" required value="${this.escapeHtml(current)}" />
+            <div style="display:flex; gap:8px; align-items:center;">
+                <button type="submit" class="btn-liquid clear">Save</button>
+            </div>
+        `;
+        this.dom.modalBody.innerHTML = '';
+        this.dom.modalBody.appendChild(form);
+        this._modalContext = 'rename-wall';
+        this._activeForm = form;
+
+        form.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            if (form.classList.contains('is-submitting')) return;
+            const nameEl = form.querySelector('#renameWallName');
+            const name = (nameEl.value || '').trim();
+            if (!name) { nameEl.focus(); return; }
+            form.classList.add('is-submitting');
+            try {
+                const id = this.selectedWall && this.selectedWall.id;
+                if (!id) throw new Error('Missing wall id');
+                const resp = await fetch('/api/walls', {
+                    method: 'PATCH',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ id, name, password: this.tempPassword })
+                });
+                const result = await resp.json().catch(() => ({}));
+                if (!resp.ok) {
+                    alert(result && result.error ? String(result.error) : 'Failed to rename wall');
+                    form.classList.remove('is-submitting');
+                    return;
+                }
+                await this.fetchWalls();
+                // Refresh selected wall from the updated list
+                const w = this.walls.find(x => String(x.id) === String(id));
+                if (w) {
+                    this.selectedWall = { id: w.id, slug: w.slug, name: w.name, is_public: !!w.is_public };
+                    this.saveSelectedWallState();
+                }
+                this.updateWallTitle();
+                this.renderWallButtons();
+                this.closeModal();
+                if (this.currentWall === 'rishu') this.loadEntries();
+            } catch (_) {
+                alert('Failed to rename wall.');
+            } finally {
+                form.classList.remove('is-submitting');
+            }
+        });
+
+        this.openModal();
+        setTimeout(() => form.querySelector('#renameWallName')?.focus(), 50);
+    }
+
+    showWallVisibilityModal() {
+        const form = document.createElement('form');
+        form.className = 'entry-form';
+        const isPublic = !!(this.selectedWall && this.selectedWall.is_public);
+        form.innerHTML = `
+            <h3>Wall Visibility</h3>
+            <label style="display:flex; align-items:center; gap:8px;">
+                <input type="checkbox" id="visPublic" ${isPublic ? 'checked' : ''}>
+                <span>Public (visible to everyone)</span>
+            </label>
+            <div style="display:flex; gap:8px; align-items:center; margin-top:8px;">
+                <button type="submit" class="btn-liquid clear">Save</button>
+            </div>
+        `;
+        this.dom.modalBody.innerHTML = '';
+        this.dom.modalBody.appendChild(form);
+        this._modalContext = 'wall-visibility';
+        this._activeForm = form;
+
+        form.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            if (form.classList.contains('is-submitting')) return;
+            form.classList.add('is-submitting');
+            try {
+                const id = this.selectedWall && this.selectedWall.id;
+                if (!id) throw new Error('Missing wall id');
+                const is_public = !!form.querySelector('#visPublic').checked;
+                const resp = await fetch('/api/walls', {
+                    method: 'PATCH',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ id, is_public, password: this.tempPassword })
+                });
+                const result = await resp.json().catch(() => ({}));
+                if (!resp.ok) {
+                    alert(result && result.error ? String(result.error) : 'Failed to update visibility');
+                    form.classList.remove('is-submitting');
+                    return;
+                }
+                await this.fetchWalls();
+                const w = this.walls.find(x => String(x.id) === String(id));
+                if (w) {
+                    this.selectedWall = { id: w.id, slug: w.slug, name: w.name, is_public: !!w.is_public };
+                    this.saveSelectedWallState();
+                }
+                this.updateWallTitle();
+                this.renderWallButtons();
+                this.closeModal();
+                if (this.currentWall === 'rishu') this.loadEntries();
+            } catch (_) {
+                alert('Failed to update visibility.');
+            } finally {
+                form.classList.remove('is-submitting');
+            }
+        });
+
+        this.openModal();
     }
 
     setupRouting() {
@@ -332,7 +1061,7 @@ class WallApp {
             this.dom.wallTitle.textContent = 'project ideas';
             this.dom.toggleWallButton.textContent = "rishu's wall";
         } else if (this.currentWall === 'rishu') {
-            this.dom.wallTitle.textContent = "rishu's wall";
+            this.updateWallTitle();
             this.dom.toggleWallButton.textContent = "friends' wall";
         } else if (this.currentWall === 'drafts') {
             this.dom.wallTitle.textContent = 'drafts';
@@ -380,6 +1109,10 @@ class WallApp {
                 this.showPasswordForm();
             }
         } else {
+            if (this.isAuthenticated && this.isVideoWall()) {
+                this.showVideoEntryForm();
+                return;
+            }
             if (this.isAuthenticated) {
                 this.showEntryForm();
             } else {
@@ -456,9 +1189,16 @@ class WallApp {
                     const h = document.querySelector('.series-card.drag-over');
                     if (h) h.classList.remove('drag-over');
                 });
-                // Right-click context menu: add to series / create series
+                // Right-click context menu: add to series / create series / delete
                 entryDiv.addEventListener('contextmenu', (ev) => {
                     if (!this.isAuthenticated) return;
+                    ev.preventDefault();
+                    this.showEntryContextMenu(ev.clientX, ev.clientY, entry);
+                });
+            }
+            // Ensure pinned rows on rishu also get context menu (no DnD)
+            if (this.isAuthenticated && entry.is_pinned && this.currentWall === 'rishu') {
+                entryDiv.addEventListener('contextmenu', (ev) => {
                     ev.preventDefault();
                     this.showEntryContextMenu(ev.clientX, ev.clientY, entry);
                 });
@@ -487,6 +1227,18 @@ class WallApp {
                 entryDiv.appendChild(thumb);
             }
 
+            // Video thumbnail for video walls (based on selected wall slug/name)
+            if (this.currentWall === 'rishu' && this.isVideoWall()) {
+                const url = this.extractFirstUrl(entryText);
+                if (url) {
+                    const vthumb = document.createElement('img');
+                    vthumb.alt = 'Video thumbnail';
+                    vthumb.className = 'video-thumb';
+                    this.fetchVideoMeta(url).then(meta => { if (meta && meta.thumbnail_url) vthumb.src = meta.thumbnail_url; }).catch(()=>{});
+                    entryDiv.appendChild(vthumb);
+                }
+            }
+
             // Title + divider + body text
             const hasTitle = typeof entry.title === 'string' && entry.title.trim().length > 0;
             if (hasTitle) {
@@ -502,7 +1254,29 @@ class WallApp {
 
             const textSpan = document.createElement('span');
             textSpan.className = 'entry-text';
-            textSpan.innerHTML = this.linkify(entryText);
+            if (this.currentWall === 'rishu' && this.isVideoWall()) {
+                const url = this.extractFirstUrl(entryText);
+                if (url) {
+                    // Prefer showing the video title as link text when available
+                    const base = document.createElement('a');
+                    base.href = url;
+                    base.target = '_blank';
+                    base.rel = 'noopener noreferrer';
+                    base.textContent = entry.title && entry.title.trim() ? entry.title.trim() : url;
+                    textSpan.innerHTML = '';
+                    textSpan.appendChild(base);
+                    // If no title, fetch meta to update text content lazily
+                    if (!entry.title || !entry.title.trim()) {
+                        this.fetchVideoMeta(url).then(meta => {
+                            if (meta && meta.title) { base.textContent = meta.title; }
+                        }).catch(()=>{});
+                    }
+                } else {
+                    textSpan.innerHTML = this.linkify(entryText);
+                }
+            } else {
+                textSpan.innerHTML = this.linkify(entryText);
+            }
 
             entryDiv.appendChild(textSpan);
 
@@ -521,6 +1295,13 @@ class WallApp {
                 }
         if (this.currentWall === 'drafts' && this.isAuthenticated) {
             this.showEditForm(entry);
+        } else if (this.currentWall === 'rishu' && this.isVideoWall()) {
+            const url = this.extractFirstUrl(entry.text || '');
+            if (url) {
+                this.showVideoModal(entry);
+                return;
+            }
+            this.showEntry(entry);
         } else {
             this.showEntry(entry);
         }
@@ -857,7 +1638,80 @@ class WallApp {
         });
         wrap.appendChild(create);
 
+        // Divider isn't styled; we just append another action.
+        const del = document.createElement('div');
+        del.className = 'context-item';
+        del.textContent = 'Delete entry…';
+        del.addEventListener('click', (ev) => {
+            ev.stopPropagation();
+            wrap.remove();
+            this.showDeleteEntryConfirm(entry);
+        });
+        wrap.appendChild(del);
+
         document.body.appendChild(wrap);
+    }
+
+    showDeleteEntryConfirm(entry) {
+        const cm = document.getElementById('entryContextMenu');
+        if (cm) cm.remove();
+        const form = document.createElement('form');
+        form.className = 'entry-form';
+        form.innerHTML = `
+            <h3>Delete Entry</h3>
+            <div class="entry-text">Type \"delete me\" to confirm deletion.</div>
+            <div class="delete-confirm">
+              <small>Confirmation</small>
+              <div class="confirm-row">
+                <input type="text" class="confirm-input" placeholder="delete me" />
+                <button type="button" class="btn-liquid danger clear confirm-btn" disabled>Delete</button>
+              </div>
+            </div>
+        `;
+        this.dom.modalBody.innerHTML = '';
+        this.dom.modalBody.appendChild(form);
+        this._modalContext = 'delete-entry';
+        this._activeForm = form;
+
+        const input = form.querySelector('.confirm-input');
+        const btn = form.querySelector('.confirm-btn');
+        input.addEventListener('input', () => {
+            btn.disabled = !(String(input.value || '').trim().toLowerCase() === 'delete me');
+        });
+
+        btn.addEventListener('click', async () => {
+            btn.disabled = true;
+            try {
+                const id = entry && entry.id;
+                if (!id) return;
+                const w = this.currentWall;
+                if (w === 'friend') await this.removeFriendEntry(id);
+                else if (w === 'tech') await this.removeTechNote(id);
+                else if (w === 'songs') await this.removeSongQuote(id);
+                else if (w === 'ideas') await this.removeProjectIdea(id);
+                else await this.removeEntry(id);
+
+                // Update local caches
+                const key = (['friend','tech','songs','ideas','drafts'].includes(w)) ? w : 'rishu';
+                if (Array.isArray(this.entriesCache[key])) {
+                    this.entriesCache[key] = this.entriesCache[key].filter(e => e.id !== id);
+                    if (this.currentWall === key || (key === 'rishu' && this.currentWall === 'rishu')) {
+                        this.entries = this.entriesCache[key];
+                        this.renderEntries();
+                    }
+                } else {
+                    // Fallback: reload
+                    await this.loadEntries();
+                }
+                this.closeModal();
+            } catch (_) {
+                alert('Failed to delete entry.');
+                btn.disabled = false;
+            }
+        });
+
+        this.openModal();
+        setTimeout(() => input?.focus(), 50);
     }
 
     stripHtml(s = '') { const d = document.createElement('div'); d.innerHTML = String(s || ''); return (d.textContent || '').trim(); }
@@ -1004,8 +1858,8 @@ class WallApp {
 
         container.appendChild(content);
 
-        // Actions at bottom for main, friends, tech, and songs walls (ideas: no sharing)
-        if ((this.currentWall === 'rishu' || this.currentWall === 'friend' || this.currentWall === 'tech' || this.currentWall === 'songs' || this.currentWall === 'ideas') && isObj) {
+        // Actions at bottom for any wall
+        if (isObj) {
             const actions = document.createElement('div');
             actions.className = 'modal-actions';
 
@@ -1028,7 +1882,7 @@ class WallApp {
                 left.appendChild(delBtn);
             }
 
-            // Edit (auth only) for rishu, tech, songs, ideas walls
+            // Edit (auth only) for known editable walls
             if (this.isAuthenticated && (this.currentWall === 'rishu' || this.currentWall === 'tech' || this.currentWall === 'songs' || this.currentWall === 'ideas')) {
                 const editBtn = document.createElement('button');
                 editBtn.type = 'button';
@@ -1048,8 +1902,8 @@ class WallApp {
                 right.appendChild(editBtn);
             }
 
-            // Share icon button (disabled for ideas wall)
-            if (this.currentWall !== 'ideas') {
+            // Share icon button (all walls, default behavior for future walls)
+            {
                 const shareBtn = document.createElement('button');
                 shareBtn.type = 'button';
                 shareBtn.className = 'icon-btn btn-liquid clear';
@@ -1064,15 +1918,17 @@ class WallApp {
                 shareBtn.addEventListener('click', async () => {
                     this.showShareLoading();
                     try {
-                        if (this.currentWall === 'tech' || this.currentWall === 'songs') {
+                        const wall = String(this.currentWall || '').toLowerCase();
+                        if (wall === 'rishu' || wall === 'friend') {
+                            const { shortUrl } = await this.createShortLink(entry.id, wall === 'friend' ? 'friend' : 'rishu');
+                            this.showShareModal(shortUrl);
+                        } else {
+                            // Default: share a hash link for any other wall types (future-proof)
                             const base = location.origin || '';
-                            const longUrl = `${base}/#${this.currentWall}&entry=${encodeURIComponent(entry.id)}`;
+                            const longUrl = `${base}/#${encodeURIComponent(wall)}&entry=${encodeURIComponent(entry.id)}`;
                             const { shortUrl } = await this.createShortLink(null, null, longUrl);
                             this.showShareModal(shortUrl || longUrl);
-                            return;
                         }
-                        const { shortUrl } = await this.createShortLink(entry.id, this.currentWall === 'friend' ? 'friend' : 'rishu');
-                        this.showShareModal(shortUrl);
                     } catch (e) {
                         const msg = String(e && e.message) || '';
                         if (/Short links require DB migration/i.test(msg)) {

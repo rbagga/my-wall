@@ -8,6 +8,7 @@
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.39.0",
+    "omnara": "^0.2.3",
     "openai": "^6.1.0"
   },
   "devDependencies": {
