@@ -14,6 +14,8 @@
     <div class="container">
         <div class="header">
             <div class="header-left">
+                <button id="loginButton" class="toggle-wall-button btn-liquid clear">login</button>
+                <button id="homeButton" class="toggle-wall-button btn-liquid clear">home</button>
                 <button id="addButton" class="add-button-header btn-liquid clear">add entry</button>
                 <div id="wallsNav" style="display:inline-flex; gap:6px; flex-wrap:wrap;"></div>
                 <button id="addWallButton" class="toggle-wall-button btn-liquid clear" style="display:none;">add wall</button>
@@ -30,6 +32,11 @@
             </label>
         </div>
         <div id="wall"></div>
+    </div>
+
+    <!-- Landing bubbles view -->
+    <div id="homeView" class="home-view" aria-hidden="true" style="display:none;">
+        <div class="bubbles" id="bubbles"></div>
     </div>
 
     <div id="modal" class="modal">
