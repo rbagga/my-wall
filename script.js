@@ -1284,8 +1284,9 @@ class WallApp {
         root.appendChild(centerEl);
 
         // Place others initially around a ring so they don't stack
-        const ringFactor = (vw <= 480 ? 0.30 : (vw <= 768 ? 0.26 : 0.22));
-        const R0 = Math.min(vw, vh) * ringFactor;
+        const ringBase = (vw <= 480 ? 0.30 : (vw <= 768 ? 0.26 : 0.22));
+        const crowdScaleInit = others.length >= 8 ? 1.35 : (others.length >= 6 ? 1.20 : 1.0);
+        const R0 = Math.min(vw, vh) * ringBase * crowdScaleInit;
         const N = others.length || 1;
         for (let i = 0; i < others.length; i++) {
             const w = others[i];
@@ -1402,8 +1403,10 @@ class WallApp {
         const els = Array.from(this.dom.bubbles.querySelectorAll('.bubble'))
             .filter(el => !el.classList.contains('util'));
         // Determine anchors around a ring for non-center bubbles
-        const ringFactor = (vw <= 480 ? 0.30 : (vw <= 768 ? 0.26 : 0.22));
-        const ringR = Math.min(vw, vh) * ringFactor;
+        const nonCenterCount = els.filter(el => !el.classList.contains('center')).length;
+        const ringBase = (vw <= 480 ? 0.30 : (vw <= 768 ? 0.26 : 0.22));
+        const crowdScale = nonCenterCount >= 8 ? 1.35 : (nonCenterCount >= 6 ? 1.20 : 1.0);
+        const ringR = Math.min(vw, vh) * ringBase * crowdScale;
         let anchorIndex = 0;
         els.forEach((el) => {
             // Allow CSS animations; physics controls left/top
@@ -1447,9 +1450,11 @@ class WallApp {
         if (!this._bubbleSim) return;
         const vw = window.innerWidth; const vh = window.innerHeight;
         const cx = vw/2; const cy = vh/2 + 10;
-        const ringR = Math.min(vw, vh) * 0.22;
-        // Recompute anchors
         const nonCenter = this._bubbleSim.nodes.filter(n => !n.fixed);
+        const ringBase = (vw <= 480 ? 0.30 : (vw <= 768 ? 0.26 : 0.22));
+        const crowdScale = nonCenter.length >= 8 ? 1.35 : (nonCenter.length >= 6 ? 1.20 : 1.0);
+        const ringR = Math.min(vw, vh) * ringBase * crowdScale;
+        // Recompute anchors
         nonCenter.forEach((n, i) => {
             const t = i / Math.max(1, (nonCenter.length));
             const angle = t * Math.PI * 2;
