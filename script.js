@@ -1284,7 +1284,8 @@ class WallApp {
         root.appendChild(centerEl);
 
         // Place others initially around a ring so they don't stack
-        const R0 = Math.min(vw, vh) * 0.22;
+        const ringFactor = (vw <= 480 ? 0.30 : (vw <= 768 ? 0.26 : 0.22));
+        const R0 = Math.min(vw, vh) * ringFactor;
         const N = others.length || 1;
         for (let i = 0; i < others.length; i++) {
             const w = others[i];
@@ -1327,9 +1328,19 @@ class WallApp {
             el.style.setProperty('--hl2b', `${r(14, 22).toFixed(1)}%`);
             el.style.setProperty('--hl2r', `${r(12, 20).toFixed(1)}%`);
             el.style.setProperty('--rot', `${r(-4, 4).toFixed(1)}deg`);
-            // Tiny size variance
-            const s = Math.round(r(110, 130));
+            // Size variance with mobile-friendly bounds
+            const vw = window.innerWidth || 1024;
+            let minS = 110, maxS = 130;
+            if (vw <= 480) { minS = 78; maxS = 92; }
+            else if (vw <= 768) { minS = 96; maxS = 110; }
+            const s = Math.round(r(minS, maxS));
             el.style.width = `${s}px`; el.style.height = `${s}px`;
+        } else {
+            // Center bubble: scale down on small screens
+            const vw = window.innerWidth || 1024;
+            let c = 160;
+            if (vw <= 480) c = 120; else if (vw <= 768) c = 140;
+            el.style.width = `${c}px`; el.style.height = `${c}px`;
         }
         el.addEventListener('click', () => {
             // Prevent overlapping navigations
@@ -1391,7 +1402,8 @@ class WallApp {
         const els = Array.from(this.dom.bubbles.querySelectorAll('.bubble'))
             .filter(el => !el.classList.contains('util'));
         // Determine anchors around a ring for non-center bubbles
-        const ringR = Math.min(vw, vh) * 0.22;
+        const ringFactor = (vw <= 480 ? 0.30 : (vw <= 768 ? 0.26 : 0.22));
+        const ringR = Math.min(vw, vh) * ringFactor;
         let anchorIndex = 0;
         els.forEach((el) => {
             // Allow CSS animations; physics controls left/top
