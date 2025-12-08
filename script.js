@@ -1264,7 +1264,10 @@ class WallApp {
         const wallsRaw = Array.isArray(this.walls) ? this.walls.slice() : [];
         const walls = wallsRaw.filter(w => (this.isAuthenticated ? true : !!w.is_public));
         const virtuals = this.getVirtualWalls();
-        const virtualsFiltered = virtuals.filter(v => (v.slug === 'ideas' ? this.isAuthenticated : true));
+        const virtualsFiltered = virtuals.filter(v => {
+            if (v.slug === 'ideas' || v.slug === 'drafts') return this.isAuthenticated;
+            return true;
+        });
         const all = [...walls, ...virtualsFiltered];
         if (!all.length) return;
         // Center bubble: rishu
@@ -1306,6 +1309,7 @@ class WallApp {
         if (wall._virtual && wall.slug === 'tech') label = 'tech notes';
         if (wall._virtual && wall.slug === 'songs') label = 'song quotes';
         if (wall._virtual && wall.slug === 'ideas') label = 'project ideas';
+        if (wall._virtual && wall.slug === 'drafts') label = 'drafts';
         el.innerHTML = `<span>${this.escapeHtml(label)}</span>`;
         // Subtle per-bubble visual variance
         if (!isCenter) {
@@ -1340,6 +1344,7 @@ class WallApp {
             else if (wall.slug === 'tech') location.hash = '#tech';
             else if (wall.slug === 'songs') location.hash = '#songs';
             else if (wall.slug === 'ideas') location.hash = '#ideas';
+            else if (wall.slug === 'drafts') location.hash = '#drafts';
             else location.hash = '#';
         } else {
                 this.selectedWall = { id: wall.id, slug: wall.slug, name: wall.name, is_public: !!wall.is_public };
@@ -1369,6 +1374,8 @@ class WallApp {
         v.push({ _virtual: true, slug: 'tech', name: 'tech notes' });
         v.push({ _virtual: true, slug: 'songs', name: 'song quotes' });
         v.push({ _virtual: true, slug: 'ideas', name: 'project ideas' });
+        // Drafts is auth-only; include here and filter based on isAuthenticated in renderBubbles
+        v.push({ _virtual: true, slug: 'drafts', name: 'drafts' });
         return v;
     }
 
