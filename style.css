@@ -318,7 +318,7 @@ body.dark-mode .entry.pinned {
 .home-view.show { display: block; opacity: 1; }
 .bubbles { position: absolute; inset: 0; overflow: hidden; touch-action: none; }
 .bubbles { perspective: 900px; }
-.bubble { 
+.bubble {
     position: absolute;
     width: 120px; height: 120px;
     border-radius: 50%;
@@ -340,8 +340,7 @@ body.dark-mode .entry.pinned {
     border: 1px solid rgba(200,220,255,0.12);
     /* Drop shadow only (remove white inset shadows) */
     box-shadow: 0 8px 16px rgba(0,0,0,0.18);
-    transform: translateZ(0) rotateZ(var(--rot));
-    animation: floaty 6s ease-in-out infinite alternate;
+    transform: translateZ(0) rotateZ(0deg);
 }
 body.dark-mode .bubble { background: radial-gradient(120% 120% at 30% 30%, rgba(255,255,255,0.05), rgba(255,255,255,0.02) 60%, rgba(255,255,255,0) 100%); border-color: rgba(110,120,200,0.18); box-shadow: 0 10px 22px rgba(0,0,0,0.32); }
 /* Subtle glints (very low opacity) */
@@ -387,10 +386,7 @@ body.dark-mode .bubble { background: radial-gradient(120% 120% at 30% 30%, rgba(
   .bubble.small { width: 72px; height: 72px; font-size: 10px; }
 }
 
-@keyframes floaty {
-  0% { transform: translateY(-1px); }
-  100% { transform: translateY(2px); }
-}
+/* Static layout; no float animation to avoid jank on rotate */
 @keyframes pop {
   0% { transform: scale(1); opacity: 1; }
   100% { transform: scale(1.2); opacity: 0; }

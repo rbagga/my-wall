@@ -49,8 +49,15 @@ class WallApp {
             if (this.videoMetaCache.has(u)) return this.videoMetaCache.get(u);
             let endpoint = null;
             const lower = u.toLowerCase();
+            // Normalize YouTube Shorts and youtu.be for oEmbed and provide thumbnail fallback
+            let ytId = null;
+            try {
+                const info = this.extractVideoInfo(u);
+                if (info && info.provider === 'youtube' && info.id) ytId = info.id;
+            } catch (_) {}
             if (lower.includes('youtube.com') || lower.includes('youtu.be')) {
-                endpoint = `https://www.youtube.com/oembed?url=${encodeURIComponent(u)}&format=json`;
+                const oembedUrl = ytId ? `https://www.youtube.com/watch?v=${encodeURIComponent(ytId)}` : u;
+                endpoint = `https://www.youtube.com/oembed?url=${encodeURIComponent(oembedUrl)}&format=json`;
             } else if (lower.includes('vimeo.com')) {
                 endpoint = `https://vimeo.com/api/oembed.json?url=${encodeURIComponent(u)}`;
             } else if (lower.includes('dailymotion.com') || lower.includes('dai.ly')) {
@@ -66,10 +73,16 @@ class WallApp {
                     meta = null;
                 }
             }
-            // Fallback: derive title from URL
+            // Fallbacks
             if (!meta) {
+                // Derive title from hostname
                 const t = u.replace(/^https?:\/\/([^/]+).*/, '$1');
                 meta = { title: t, thumbnail_url: '' };
+            }
+            // Ensure a thumbnail for YouTube if we have an ID
+            if (ytId && (!meta.thumbnail_url || !meta.thumbnail_url.trim())) {
+                // Use reliable hqdefault as baseline
+                meta.thumbnail_url = `https://i.ytimg.com/vi/${encodeURIComponent(ytId)}/hqdefault.jpg`;
             }
             this.videoMetaCache.set(u, meta);
             return meta;
@@ -88,6 +101,10 @@ class WallApp {
                 let id = u.searchParams.get('v');
                 // Handle /embed/ID
                 if (!id && /\/embed\//.test(u.pathname)) {
+                    id = u.pathname.split('/').filter(Boolean).pop();
+                }
+                // Handle /shorts/ID
+                if (!id && /\/shorts\//.test(u.pathname)) {
                     id = u.pathname.split('/').filter(Boolean).pop();
                 }
                 if (id) return { provider: 'youtube', id };
@@ -144,6 +161,60 @@ class WallApp {
         this._modalContext = 'video-view';
         this._activeForm = null;
         this.openModal();
+        // Add delete button (left) for authenticated users, with confirm flow
+        const actionsLeft = this.dom.modalBody.querySelector('.modal-actions > div:first-child');
+        if (this.isAuthenticated && actionsLeft) {
+            const delBtn = document.createElement('button');
+            delBtn.type = 'button';
+            delBtn.className = 'btn-liquid clear';
+            delBtn.textContent = 'Delete';
+            actionsLeft.appendChild(delBtn);
+
+            // Confirm UI
+            const confirmWrap = document.createElement('div');
+            confirmWrap.className = 'delete-confirm';
+            confirmWrap.style.display = 'none';
+            confirmWrap.innerHTML = `
+                <small>Type "delete me" to confirm</small>
+                <div class="confirm-row">
+                  <input type="text" class="confirm-input" placeholder="delete me" />
+                  <button type="button" class="btn-liquid clear confirm-btn" disabled>Delete</button>
+                </div>
+            `;
+            wrap.appendChild(confirmWrap);
+
+            delBtn.addEventListener('click', () => {
+                confirmWrap.style.display = confirmWrap.style.display === 'none' ? 'flex' : 'none';
+            });
+            const input = confirmWrap.querySelector('.confirm-input');
+            const confirmBtn = confirmWrap.querySelector('.confirm-btn');
+            input.addEventListener('input', () => {
+                confirmBtn.disabled = !(input.value.trim().toLowerCase() === 'delete me');
+            });
+            confirmBtn.addEventListener('click', async () => {
+                confirmBtn.disabled = true;
+                try {
+                    // Videos live on the rishu wall; delete entry then refresh caches
+                    await this.removeEntry(entry.id);
+                    if (Array.isArray(this.entriesCache.rishu)) {
+                        this.entriesCache.rishu = this.entriesCache.rishu.filter(e => e.id !== entry.id);
+                        if (this.currentWall === 'rishu') {
+                            this.entries = this.entriesCache.rishu;
+                            this.renderEntries();
+                        }
+                    } else {
+                        // Invalidate caches and reload if needed
+                        this.entriesCache.rishu = null;
+                        this.entriesCache.drafts = null;
+                        await this.loadEntries();
+                    }
+                    this.closeModal();
+                } catch (e) {
+                    alert('Failed to delete entry.');
+                    confirmBtn.disabled = false;
+                }
+            });
+        }
         // Add share button (center)
         const actionsCenter = this.dom.modalBody.querySelector('.modal-actions .actions-center');
         if (actionsCenter && entry && entry.id) {
@@ -1218,7 +1289,7 @@ class WallApp {
             this.renderBubbles();
             this.renderUtilityBubbles();
         }
-        this.initBubbleLighting();
+        // Static visuals on home: skip dynamic lighting to avoid visual shifts
     }
 
     hideHome() {
@@ -1283,10 +1354,9 @@ class WallApp {
         centerEl.style.top = cy + 'px';
         root.appendChild(centerEl);
 
-        // Place others initially around a ring so they don't stack
+        // Place others initially around a ring so they don't stack (static radius)
         const ringBase = (vw <= 480 ? 0.30 : (vw <= 768 ? 0.26 : 0.22));
-        const crowdScaleInit = others.length >= 8 ? 1.35 : (others.length >= 6 ? 1.20 : 1.0);
-        const R0 = Math.min(vw, vh) * ringBase * crowdScaleInit;
+        const R0 = Math.min(vw, vh) * ringBase;
         const N = others.length || 1;
         for (let i = 0; i < others.length; i++) {
             const w = others[i];
@@ -1298,8 +1368,7 @@ class WallApp {
             el.style.top = py + 'px';
             root.appendChild(el);
         }
-        // Start/update physics layout
-        this.initBubblesPhysics();
+        // Static layout: no physics to avoid jank/zoom on rotate/login
     }
 
     createBubble(wall, isCenter = false) {
@@ -1314,35 +1383,7 @@ class WallApp {
         if (wall._virtual && wall.slug === 'drafts') label = 'drafts';
         el.innerHTML = `<span>${this.escapeHtml(label)}</span>`;
         // Subtle per-bubble visual variance
-        if (!isCenter) {
-            const r = (min, max) => (min + Math.random() * (max - min));
-            el.style.setProperty('--g1x', `${r(24, 36).toFixed(1)}%`);
-            el.style.setProperty('--g1y', `${r(24, 36).toFixed(1)}%`);
-            el.style.setProperty('--g1a', `${r(0.10, 0.20).toFixed(3)}`);
-            el.style.setProperty('--g2x', `${r(62, 78).toFixed(1)}%`);
-            el.style.setProperty('--g2y', `${r(62, 78).toFixed(1)}%`);
-            el.style.setProperty('--g2a', `${r(0.03, 0.09).toFixed(3)}`);
-            el.style.setProperty('--spec1a', `${r(0.28, 0.46).toFixed(3)}`);
-            el.style.setProperty('--spec2a', `${r(0.10, 0.18).toFixed(3)}`);
-            el.style.setProperty('--hl1t', `${r(12, 20).toFixed(1)}%`);
-            el.style.setProperty('--hl1l', `${r(16, 24).toFixed(1)}%`);
-            el.style.setProperty('--hl2b', `${r(14, 22).toFixed(1)}%`);
-            el.style.setProperty('--hl2r', `${r(12, 20).toFixed(1)}%`);
-            el.style.setProperty('--rot', `${r(-4, 4).toFixed(1)}deg`);
-            // Size variance with mobile-friendly bounds
-            const vw = window.innerWidth || 1024;
-            let minS = 110, maxS = 130;
-            if (vw <= 480) { minS = 78; maxS = 92; }
-            else if (vw <= 768) { minS = 96; maxS = 110; }
-            const s = Math.round(r(minS, maxS));
-            el.style.width = `${s}px`; el.style.height = `${s}px`;
-        } else {
-            // Center bubble: scale down on small screens
-            const vw = window.innerWidth || 1024;
-            let c = 160;
-            if (vw <= 480) c = 120; else if (vw <= 768) c = 140;
-            el.style.width = `${c}px`; el.style.height = `${c}px`;
-        }
+        // Use CSS-defined sizes and styles (no randomization for static layout)
         el.addEventListener('click', () => {
             // Prevent overlapping navigations
             if (this._bubbleNavTimer) { clearTimeout(this._bubbleNavTimer); this._bubbleNavTimer = null; }
@@ -1402,11 +1443,9 @@ class WallApp {
         const cy = vh / 2 + 10; // bias down slightly
         const els = Array.from(this.dom.bubbles.querySelectorAll('.bubble'))
             .filter(el => !el.classList.contains('util'));
-        // Determine anchors around a ring for non-center bubbles
-        const nonCenterCount = els.filter(el => !el.classList.contains('center')).length;
+        // Determine anchors around a ring for non-center bubbles (static radius)
         const ringBase = (vw <= 480 ? 0.30 : (vw <= 768 ? 0.26 : 0.22));
-        const crowdScale = nonCenterCount >= 8 ? 1.35 : (nonCenterCount >= 6 ? 1.20 : 1.0);
-        const ringR = Math.min(vw, vh) * ringBase * crowdScale;
+        const ringR = Math.min(vw, vh) * ringBase;
         let anchorIndex = 0;
         els.forEach((el) => {
             // Allow CSS animations; physics controls left/top
@@ -1452,8 +1491,7 @@ class WallApp {
         const cx = vw/2; const cy = vh/2 + 10;
         const nonCenter = this._bubbleSim.nodes.filter(n => !n.fixed);
         const ringBase = (vw <= 480 ? 0.30 : (vw <= 768 ? 0.26 : 0.22));
-        const crowdScale = nonCenter.length >= 8 ? 1.35 : (nonCenter.length >= 6 ? 1.20 : 1.0);
-        const ringR = Math.min(vw, vh) * ringBase * crowdScale;
+        const ringR = Math.min(vw, vh) * ringBase;
         // Recompute anchors
         nonCenter.forEach((n, i) => {
             const t = i / Math.max(1, (nonCenter.length));
