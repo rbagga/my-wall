@@ -1716,24 +1716,19 @@ class WallApp {
         const hasSeries = Array.isArray(this.series) && this.series.length > 0;
         const hasEntries = entries.length > 0;
 
-        // Render series cards first (if any), even if there are no entries
-        if (hasSeries) {
-            this.series.forEach((s) => {
-                const card = this.renderSeriesCard(s);
-                this.dom.wall.appendChild(card);
-            });
-        }
+        const allowSeries = this.currentWall !== 'drafts';
 
         if (!hasEntries && !hasSeries) {
             this.showEmptyState();
             return;
         }
 
-        // Filter out entries that are members of any series on this wall, unless the entry is pinned
+        // Filter out entries that are members of any series on this wall
         const hiddenIds = this.getSeriesMemberIdsForCurrentWall();
         if (hiddenIds && hiddenIds.size) {
-            entries = entries.filter(e => e.is_pinned || !hiddenIds.has(String(e.id)));
+            entries = entries.filter(e => !hiddenIds.has(String(e.id)));
         }
+        // Sort by pin first for convenience; we'll split into pinned/unpinned
         const hasPinInfo = entries.some(e => typeof e.is_pinned !== 'undefined' || typeof e.pin_order !== 'undefined');
         let sorted = entries;
         if (hasPinInfo) {
@@ -1746,189 +1741,53 @@ class WallApp {
                     const bo = (b.pin_order ?? Number.MAX_SAFE_INTEGER);
                     if (ao !== bo) return ao - bo;
                 }
-                // fallback by timestamp desc
                 const at = a.timestamp || '';
                 const bt = b.timestamp || '';
                 return (bt > at) ? 1 : (bt < at ? -1 : 0);
             });
         }
 
-        sorted.forEach((entry) => {
-            const entryText = entry.text;
-            const timestamp = entry.timestamp;
-            const name = entry.name;
+        const pinnedEntries = sorted.filter(e => e.is_pinned);
+        const unpinnedEntries = sorted.filter(e => !e.is_pinned);
 
-            const entryDiv = document.createElement('div');
-            entryDiv.className = 'entry';
-            entryDiv.dataset.id = entry.id;
-            if (entry.is_pinned) entryDiv.classList.add('pinned');
-
-            // Auth-only: allow DnD to add to series on all walls.
-            // Avoid conflict with pinned reorder on rishu by skipping draggable for pinned rows.
-            if (this.isAuthenticated && (!entry.is_pinned || this.currentWall !== 'rishu')) {
-                entryDiv.setAttribute('draggable', 'true');
-                entryDiv.addEventListener('dragstart', (ev) => {
-                    const payload = { id: entry.id, type: this.currentWall };
-                    try { ev.dataTransfer.setData('application/json', JSON.stringify(payload)); } catch(_) {}
-                    try { ev.dataTransfer.setData('text/plain', `${this.currentWall}:${entry.id}`); } catch(_) {}
-                    ev.dataTransfer.effectAllowed = 'move';
-                });
-                entryDiv.addEventListener('dragend', () => {
-                    const h = document.querySelector('.series-card.drag-over');
-                    if (h) h.classList.remove('drag-over');
-                });
-                // Right-click context menu: add to series / create series / delete
-                entryDiv.addEventListener('contextmenu', (ev) => {
-                    if (!this.isAuthenticated) return;
-                    ev.preventDefault();
-                    this.showEntryContextMenu(ev.clientX, ev.clientY, entry);
-                });
+        // Pinned lane: combine pinned entries + pinned series in saved layout order
+        if (allowSeries && hasSeries) {
+            const pinnedSeriesIds = this.getPinnedSeriesIdsForWall(this.currentWall).map(String);
+            const pinnedSeries = (this.series || []).filter(s => pinnedSeriesIds.includes(String(s.id)));
+            const layout = this.getPinnedLayoutForWall(this.currentWall);
+            const entryMap = new Map(pinnedEntries.map(e => [String(e.id), e]));
+            const seriesMap = new Map(pinnedSeries.map(s => [String(s.id), s]));
+            const seen = new Set();
+            const appendEntry = (e) => this.renderSingleEntry(e);
+            const appendSeries = (s) => { const c = this.renderSeriesCard(s); this.dom.wall.appendChild(c); };
+            // Render by saved layout
+            for (const tok of layout) {
+                if (seen.has(tok)) continue;
+                const [k, id] = tok.split(':');
+                if (k === 'e' && entryMap.has(id)) { appendEntry(entryMap.get(id)); entryMap.delete(id); seen.add(tok); }
+                else if (k === 's' && seriesMap.has(id)) { appendSeries(seriesMap.get(id)); seriesMap.delete(id); seen.add(tok); }
             }
-            // Ensure pinned rows on rishu also get context menu (no DnD)
-            if (this.isAuthenticated && entry.is_pinned && this.currentWall === 'rishu') {
-                entryDiv.addEventListener('contextmenu', (ev) => {
-                    ev.preventDefault();
-                    this.showEntryContextMenu(ev.clientX, ev.clientY, entry);
-                });
-            }
-
-            const timestampSpan = document.createElement('span');
-            timestampSpan.className = 'entry-timestamp';
-            timestampSpan.textContent = timestamp ? this.formatTimestamp(timestamp) : '';
-
-            if (name && this.currentWall === 'friend') {
-                const nameSpan = document.createElement('span');
-                nameSpan.className = 'entry-name';
-                nameSpan.textContent = name;
-                entryDiv.appendChild(timestampSpan);
-                entryDiv.appendChild(nameSpan);
-            } else {
-                entryDiv.appendChild(timestampSpan);
-            }
-
-            // Spotify thumbnail for songs wall (after timestamp)
-            if (this.currentWall === 'songs' && entry.spotify_url) {
-                const thumb = document.createElement('img');
-                thumb.alt = 'Album art';
-                thumb.className = 'spotify-thumb';
-                this.fetchSpotifyArt(entry.spotify_url).then((url) => { if (url) thumb.src = url; });
-                entryDiv.appendChild(thumb);
-            }
-
-            // Video thumbnail for video walls (based on selected wall slug/name)
-            if (this.currentWall === 'rishu' && this.isVideoWall()) {
-                const url = this.extractFirstUrl(entryText);
-                if (url) {
-                    const vthumb = document.createElement('img');
-                    vthumb.alt = 'Video thumbnail';
-                    vthumb.className = 'video-thumb';
-                    this.fetchVideoMeta(url).then(meta => { if (meta && meta.thumbnail_url) vthumb.src = meta.thumbnail_url; }).catch(()=>{});
-                    entryDiv.appendChild(vthumb);
-                }
-            }
-
-            // Title + divider + body text
-            const hasTitle = typeof entry.title === 'string' && entry.title.trim().length > 0;
-            if (hasTitle) {
-                const titleSpan = document.createElement('span');
-                titleSpan.className = 'entry-title';
-                titleSpan.textContent = entry.title.trim();
-                entryDiv.appendChild(titleSpan);
-
-                const vdiv = document.createElement('span');
-                vdiv.className = 'vdiv';
-                entryDiv.appendChild(vdiv);
-            }
-
-            const textSpan = document.createElement('span');
-            textSpan.className = 'entry-text';
-            if (this.currentWall === 'rishu' && this.isVideoWall()) {
-                const url = this.extractFirstUrl(entryText);
-                if (url) {
-                    // Prefer showing the video title as link text when available
-                    const base = document.createElement('a');
-                    base.href = url;
-                    base.target = '_blank';
-                    base.rel = 'noopener noreferrer';
-                    base.textContent = entry.title && entry.title.trim() ? entry.title.trim() : url;
-                    textSpan.innerHTML = '';
-                    textSpan.appendChild(base);
-                    // If no title, fetch meta to update text content lazily
-                    if (!entry.title || !entry.title.trim()) {
-                        this.fetchVideoMeta(url).then(meta => {
-                            if (meta && meta.title) { base.textContent = meta.title; }
-                        }).catch(()=>{});
-                    }
-                } else {
-                    textSpan.innerHTML = this.linkify(entryText);
-                }
-            } else {
-                textSpan.innerHTML = this.linkify(entryText);
-            }
-
-            entryDiv.appendChild(textSpan);
-
-            // (thumb moved earlier)
-
-            // Entry click: view on public/friends, edit on drafts (auth only)
-            entryDiv.addEventListener('click', (ev) => {
-                // Allow clicking links without opening modal
-                if (ev.target && ev.target.closest && ev.target.closest('a')) {
-                    ev.stopPropagation();
-                    return;
-                }
-                if (Date.now() < (this._suppressClickUntil || 0)) {
-                    // ignore click generated by finishing a drag
-                    return;
-                }
-        if (this.currentWall === 'drafts' && this.isAuthenticated) {
-            this.showEditForm(entry);
-        } else if (this.currentWall === 'rishu' && this.isVideoWall()) {
-            const url = this.extractFirstUrl(entry.text || '');
-            if (url) {
-                this.showVideoModal(entry);
-                return;
-            }
-            this.showEntry(entry);
+            // Remaining pinned entries (by pin_order)
+            Array.from(entryMap.values()).sort((a,b) => (a.pin_order ?? 0) - (b.pin_order ?? 0)).forEach(appendEntry);
+            // Remaining pinned series (in pinnedSeriesIds order)
+            pinnedSeriesIds.filter(id => seriesMap.has(id)).forEach(id => appendSeries(seriesMap.get(id)));
         } else {
-            this.showEntry(entry);
+            // No series integration; render pinned entries in order
+            pinnedEntries.forEach(e => this.renderSingleEntry(e));
         }
-    });
 
-            // Pin/unpin + drag controls on rishu wall
-            if (this.currentWall === 'rishu') {
-                const pinBtn = document.createElement('button');
-                pinBtn.className = 'pin-btn';
-                pinBtn.type = 'button';
-                pinBtn.title = entry.is_pinned ? 'Unpin' : 'Pin';
-                pinBtn.setAttribute('aria-label', entry.is_pinned ? 'Unpin entry' : 'Pin entry');
-                pinBtn.innerHTML = `
-                    <svg viewBox="0 0 24 24" aria-hidden="true">
-                      <path d="M8 3 H16 L14 8 V11 L17 14 V15 H7 V14 L10 11 V8 Z"/>
-                      <path d="M12 15 V21"/>
-                    </svg>
-                `;
-                // Prevent row-drag from starting when interacting with the pin button
-                pinBtn.addEventListener('mousedown', (ev) => { ev.stopPropagation(); });
-                pinBtn.addEventListener('touchstart', (ev) => { ev.stopPropagation(); }, { passive: true });
-                pinBtn.addEventListener('click', (ev) => {
-                    ev.stopPropagation();
-                    this.togglePin(entry);
-                });
-                entryDiv.appendChild(pinBtn);
+        // Unpinned series appear after pinned lane, before unpinned entries
+        if (allowSeries && hasSeries) {
+            const pinnedSeriesIds = this.getPinnedSeriesIdsForWall(this.currentWall).map(String);
+            const unpinnedSeries = (this.series || []).filter(s => !pinnedSeriesIds.includes(String(s.id)));
+            unpinnedSeries.forEach(s => {
+                const card = this.renderSeriesCard(s);
+                this.dom.wall.appendChild(card);
+            });
+        }
 
-                // Enable custom mouse-based dragging only for pinned entries
-                if (entry.is_pinned) {
-                    entryDiv.classList.add('draggable');
-                    entryDiv.addEventListener('mousedown', (e) => this.onMouseDownDrag(e, entryDiv));
-                    // touch support (basic)
-                    entryDiv.addEventListener('touchstart', (e) => this.onTouchStartDrag(e, entryDiv), { passive: false });
-                }
-            }
-
-            // No inline edit button on rows
-            this.dom.wall.appendChild(entryDiv);
-        });
+        // Unpinned entries
+        unpinnedEntries.forEach(e => this.renderSingleEntry(e));
 
         // dragover/drop listeners added once in setup
     }
@@ -1959,6 +1818,8 @@ class WallApp {
         const card = document.createElement('div');
         card.className = 'entry series-card';
         card.dataset.seriesId = String(series.id);
+        const isPinnedSeries = this.isSeriesPinned(series.id);
+        if (isPinnedSeries) card.classList.add('pinned');
         // timestamp placeholder (hidden via CSS for series-card)
         const ts = document.createElement('span');
         ts.className = 'entry-timestamp';
@@ -1968,12 +1829,11 @@ class WallApp {
         const titleSpan = document.createElement('span');
         titleSpan.className = 'entry-title series-title';
         titleSpan.textContent = String(series.title || '').trim() || 'Untitled Series';
-        card.appendChild(titleSpan);
 
-        // Centering spacer
-        const spacer = document.createElement('span');
-        spacer.className = 'series-spacer';
-        card.appendChild(spacer);
+        // Center group: title + toggle
+        const centerWrap = document.createElement('div');
+        centerWrap.className = 'series-center';
+        centerWrap.appendChild(titleSpan);
 
         // Toggle button
         const toggle = document.createElement('button');
@@ -1985,7 +1845,28 @@ class WallApp {
               <path d="M6 8 L12 16 L18 8 Z" />
             </svg>
         `;
-        card.appendChild(toggle);
+        centerWrap.appendChild(toggle);
+        card.appendChild(centerWrap);
+
+        // Pin button (local-only) — appended last to align right like entries
+        if (this.isAuthenticated) {
+            const pinBtn = document.createElement('button');
+            pinBtn.type = 'button';
+            pinBtn.className = 'pin-btn';
+            pinBtn.title = isPinnedSeries ? 'Unpin series' : 'Pin series';
+            pinBtn.setAttribute('aria-label', isPinnedSeries ? 'Unpin series' : 'Pin series');
+            pinBtn.innerHTML = `
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                  <path d="M8 3 H16 L14 8 V11 L17 14 V15 H7 V14 L10 11 V8 Z"/>
+                  <path d="M12 15 V21"/>
+                </svg>
+            `;
+            pinBtn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                this.toggleSeriesPin(series.id);
+            });
+            card.appendChild(pinBtn);
+        }
 
         // Right-click context menu on series card (auth only)
         if (this.isAuthenticated) {
@@ -1998,6 +1879,7 @@ class WallApp {
 
         const itemsWrap = document.createElement('div');
         itemsWrap.className = 'series-items hidden';
+        itemsWrap.dataset.seriesId = String(series.id);
 
         const ensureLoaded = async () => {
             const sid = series.id;
@@ -2024,8 +1906,8 @@ class WallApp {
 
         const toggleOpen = async () => {
             if (itemsWrap.classList.contains('hidden')) {
-                // Attach group after the card on first open
-                if (!itemsWrap.parentNode && card.parentNode) {
+                // Always attach group immediately after the card on open
+                if (card.parentNode) {
                     if (card.nextSibling) card.parentNode.insertBefore(itemsWrap, card.nextSibling);
                     else card.parentNode.appendChild(itemsWrap);
                 }
@@ -2039,7 +1921,10 @@ class WallApp {
         };
 
         toggle.addEventListener('click', (e) => { e.stopPropagation(); toggleOpen(); });
-        card.addEventListener('click', () => toggleOpen());
+        card.addEventListener('click', () => {
+            if (Date.now() < (this._suppressClickUntil || 0)) return;
+            toggleOpen();
+        });
 
         // Accept drops to add entries to series (auth only)
         if (this.isAuthenticated) {
@@ -2066,9 +1951,19 @@ class WallApp {
                 if (!id) return;
                 try {
                     await this.addToSeries(series.id, id, type || this.currentWall);
-                    // refresh items cache and view if expanded
+                    // refresh items cache and view
                     this.seriesItemsCache.delete(String(series.id));
                     if (card.classList.contains('expanded')) await ensureLoaded();
+                    await this.prefetchSeriesItemsForCurrentWall();
+                    // Remove from the main list immediately
+                    const key = (['friend','tech','songs','ideas','drafts'].includes(type)) ? type : 'rishu';
+                    if (Array.isArray(this.entriesCache[key])) {
+                        this.entriesCache[key] = this.entriesCache[key].filter(e => String(e.id) !== String(id));
+                        if (this.currentWall === key || (key === 'rishu' && this.currentWall === 'rishu')) {
+                            this.entries = this.entriesCache[key];
+                        }
+                    }
+                    this.renderEntries();
                 } catch (e) {
                     const msg = String(e && e.message || 'Failed to add to series');
                     alert(msg);
@@ -2076,14 +1971,21 @@ class WallApp {
             });
         }
 
+        // Enable drag using the same engine as pinned entries
+        if (this.isAuthenticated) {
+            if (isPinnedSeries) card.classList.add('draggable');
+            card.addEventListener('mousedown', (e) => this.onMouseDownDrag(e, card));
+            card.addEventListener('touchstart', (e) => this.onTouchStartDrag(e, card), { passive: false });
+        }
+
         return card;
     }
 
-    async createSeries(title) {
+    async createSeries(title, homeWallOverride = null) {
         const resp = await fetch('/api/series', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ title, password: this.tempPassword, wall: this.currentWall })
+            body: JSON.stringify({ title, password: this.tempPassword, wall: homeWallOverride || this.currentWall })
         });
         const result = await resp.json().catch(() => ({}));
         if (!resp.ok) throw new Error(result.error || 'Error creating series');
@@ -2133,6 +2035,16 @@ class WallApp {
         wrap.style.left = x + 'px';
         wrap.style.top = y + 'px';
 
+        const add = document.createElement('div');
+        add.className = 'context-item';
+        add.textContent = 'Add entry to series…';
+        add.addEventListener('click', (ev) => {
+            ev.stopPropagation();
+            wrap.remove();
+            this.showAddEntryToSeriesForm(series);
+        });
+        wrap.appendChild(add);
+
         const del = document.createElement('div');
         del.className = 'context-item';
         del.textContent = 'Delete series…';
@@ -2153,6 +2065,140 @@ class WallApp {
         wrap.appendChild(del);
 
         document.body.appendChild(wrap);
+    }
+
+    showAddEntryToSeriesForm(series) {
+        const wall = (series && series.home_wall) ? String(series.home_wall) : String(this.currentWall || 'rishu');
+        const type = ['rishu','tech','songs','ideas'].includes(wall) ? wall : 'rishu';
+        const form = document.createElement('form');
+        form.className = 'entry-form';
+        let inner = '';
+        if (type === 'songs') {
+            inner = `
+                <h3>Add to “${(series.title || 'Series')}”</h3>
+                <input type="text" id="entryTitle" placeholder="Song / Artist (optional)">
+                <textarea id="entryText" placeholder="Paste a lyric or quote..." required></textarea>
+                <input type="url" id="spotifyUrl" placeholder="Spotify track/album URL (optional)">
+                <div style="display:flex; gap:8px; align-items:center;">
+                    <button type="button" id="saveBtn" class="btn-liquid clear">Publish</button>
+                </div>
+            `;
+        } else {
+            inner = `
+                <h3>Add to “${(series.title || 'Series')}”</h3>
+                <input type="text" id="entryTitle" placeholder="Title (optional)">
+                <textarea id="entryText" placeholder="Write your entry..." required></textarea>
+                <div style="display:flex; gap:8px; align-items:center;">
+                    <button type="button" id="saveBtn" class="btn-liquid clear">Publish</button>
+                </div>
+            `;
+        }
+        form.innerHTML = inner;
+        this.dom.modalBody.innerHTML = '';
+        this.dom.modalBody.appendChild(form);
+        this._modalContext = 'series-add-entry';
+        this._activeForm = form;
+
+        const saveBtn = form.querySelector('#saveBtn');
+        saveBtn.addEventListener('click', async () => {
+            const textarea = form.querySelector('#entryText');
+            const titleEl = form.querySelector('#entryTitle');
+            const spotEl = form.querySelector('#spotifyUrl');
+            const text = (textarea && textarea.value || '').trim();
+            const title = (titleEl && titleEl.value) ? titleEl.value : '';
+            const spotify_url = (spotEl && spotEl.value) ? spotEl.value.trim() : '';
+            if (!text) { textarea && textarea.focus(); return; }
+            try {
+                let created = null;
+                if (type === 'tech') created = await this.saveTechNote(text, this.tempPassword, title);
+                else if (type === 'songs') created = await this.saveSongQuote(text, this.tempPassword, title, spotify_url);
+                else if (type === 'ideas') created = await this.saveProjectIdea(text, this.tempPassword, title);
+                else created = await this.saveEntry(text, this.tempPassword, 'public', title);
+
+                await this.addToSeries(series.id, created.id, type);
+                // Update series items cache locally to immediately hide standalone and show under series
+                const sid = String(series.id);
+                const curItems = this.seriesItemsCache.get(sid) || [];
+                const newItem = { ...created, _type: type };
+                this.seriesItemsCache.set(sid, [newItem, ...curItems]);
+                // If expanded, refresh items by re-toggling
+                const card = document.querySelector(`.series-card[data-series-id="${sid}"]`);
+                if (card && card.classList.contains('expanded')) {
+                    card.click();
+                    setTimeout(() => card.click(), 10);
+                }
+                this.closeModal();
+            } catch (e) {
+                const msg = String(e && e.message) || '';
+                if (/Invalid password/i.test(msg)) { this.tempPassword = null; alert('Invalid password. Please try again.'); this.closeModal(); }
+                else alert('Failed to add entry to series.');
+            }
+        });
+        this.openModal();
+        setTimeout(() => document.getElementById('entryTitle')?.focus(), 100);
+    }
+
+    // Injects series cards after pinned entries for current wall
+    renderSeriesAfterPins() {
+        if (this.currentWall === 'drafts') return; // never show on drafts
+        if (!Array.isArray(this.series) || !this.series.length) return;
+        const pinnedIds = this.getPinnedSeriesIdsForWall(this.currentWall);
+        const byId = new Map(this.series.map(s => [String(s.id), s]));
+        const pinned = pinnedIds.map(id => byId.get(String(id))).filter(Boolean);
+        const unpinned = this.series.filter(s => !pinnedIds.includes(String(s.id)) && !pinnedIds.includes(Number(s.id)));
+        const render = (arr) => {
+            arr.forEach(s => {
+                const card = this.renderSeriesCard(s);
+                this.dom.wall.appendChild(card);
+            });
+        };
+        render(pinned);
+        render(unpinned);
+    }
+
+    // Local storage pin state for series (per wall)
+    getPinnedSeriesIdsForWall(wall) {
+        try {
+            const raw = localStorage.getItem('pinnedSeries');
+            const data = raw ? JSON.parse(raw) : {};
+            const key = String(wall || 'rishu');
+            const arr = data[key];
+            if (Array.isArray(arr)) return arr.map(x => String(x));
+            return [];
+        } catch (_) { return []; }
+    }
+    setPinnedSeriesIdsForWall(wall, ids) {
+        try {
+            const raw = localStorage.getItem('pinnedSeries');
+            const data = raw ? JSON.parse(raw) : {};
+            data[String(wall || 'rishu')] = ids.map(x => String(x));
+            localStorage.setItem('pinnedSeries', JSON.stringify(data));
+        } catch (_) {}
+    }
+    isSeriesPinned(seriesId) {
+        const ids = this.getPinnedSeriesIdsForWall(this.currentWall);
+        return ids.includes(String(seriesId)) || ids.includes(Number(seriesId));
+    }
+    toggleSeriesPin(seriesId) {
+        const ids = this.getPinnedSeriesIdsForWall(this.currentWall);
+        const sid = String(seriesId);
+        const idx = ids.indexOf(sid);
+        if (idx === -1) ids.unshift(sid); else ids.splice(idx, 1);
+        this.setPinnedSeriesIdsForWall(this.currentWall, ids);
+        // Update combined layout: add/remove this series at front when pinning
+        let layout = this.getPinnedLayoutForWall(this.currentWall);
+        const token = `s:${sid}`;
+        if (idx === -1) {
+            // pin: prepend if not present
+            layout = layout.filter(t => t !== token);
+            layout.unshift(token);
+        } else {
+            // unpin: remove from layout
+            layout = layout.filter(t => t !== token);
+        }
+        this.setPinnedLayoutForWall(this.currentWall, layout);
+        // Rerender to reflect new placement
+        this.renderEntries();
     }
 
     showEntryContextMenu(x, y, entry) {
@@ -2191,7 +2237,20 @@ class WallApp {
                         it.addEventListener('click', async (ev) => {
                             ev.stopPropagation();
                             wrap.remove();
-                            try { await this.addToSeries(s.id, entry.id, this.currentWall); } catch (e) { alert(String(e && e.message || 'Failed')); }
+                            try {
+                                await this.addToSeries(s.id, entry.id, this.currentWall);
+                                this.seriesItemsCache.delete(String(s.id));
+                                await this.prefetchSeriesItemsForCurrentWall();
+                                // Remove from the main list immediately
+                                const key = (['friend','tech','songs','ideas','drafts'].includes(this.currentWall)) ? this.currentWall : 'rishu';
+                                if (Array.isArray(this.entriesCache[key])) {
+                                    this.entriesCache[key] = this.entriesCache[key].filter(e => String(e.id) !== String(entry.id));
+                                    if (this.currentWall === key || (key === 'rishu' && this.currentWall === 'rishu')) {
+                                        this.entries = this.entriesCache[key];
+                                    }
+                                }
+                                this.renderEntries();
+                            } catch (e) { alert(String(e && e.message || 'Failed')); }
                         });
                         sub.appendChild(it);
                     });
@@ -2367,7 +2426,67 @@ class WallApp {
             location.hash = h;
         });
 
+        // Right-click to edit/remove when authenticated
+        if (this.isAuthenticated) {
+            row.addEventListener('contextmenu', (e) => {
+                e.preventDefault();
+                this.showSeriesItemContextMenu(e.clientX, e.clientY, en);
+            });
+        }
+
         return row;
+    }
+
+    showSeriesItemContextMenu(x, y, item) {
+        const old = document.getElementById('seriesItemContextMenu');
+        if (old) old.remove();
+        const wrap = document.createElement('div');
+        wrap.id = 'seriesItemContextMenu';
+        wrap.className = 'context-menu';
+        wrap.style.left = x + 'px';
+        wrap.style.top = y + 'px';
+
+        // Edit option
+        const edit = document.createElement('div');
+        edit.className = 'context-item';
+        edit.textContent = 'Edit…';
+        edit.addEventListener('click', (ev) => {
+            ev.stopPropagation();
+            wrap.remove();
+            const t = item && (item._type || this.currentWall);
+            if (t === 'tech') this.showTechEditForm(item);
+            else if (t === 'songs') this.showSongsEditForm(item);
+            else if (t === 'ideas') this.showIdeasEditForm(item);
+            else this.showEditForm(item);
+        });
+        wrap.appendChild(edit);
+
+        // Remove from series option
+        const rem = document.createElement('div');
+        rem.className = 'context-item';
+        rem.textContent = 'Remove from series…';
+        rem.addEventListener('click', async (ev) => {
+            ev.stopPropagation();
+            wrap.remove();
+            try {
+                // Need the series id; find nearest opened series group by looking up from clicked row
+                // We use the most recently opened/expanded series card above in the DOM.
+                const groups = Array.from(document.querySelectorAll('.series-card.expanded'));
+                const last = groups[groups.length - 1];
+                const sid = last ? last.dataset.seriesId : null;
+                const t = item && (item._type || this.currentWall);
+                if (sid) {
+                    await this.removeFromSeries(sid, item.id, t);
+                    this.seriesItemsCache.delete(String(sid));
+                    // Refresh expanded list
+                    if (last) last.click(); // collapse
+                    setTimeout(() => { if (last) last.click(); }, 10); // expand
+                }
+            } catch (_) { alert('Failed to remove from series'); }
+        });
+        wrap.appendChild(rem);
+
+        document.body.appendChild(wrap);
     }
 
     // Series helpers
@@ -2385,6 +2504,176 @@ class WallApp {
         }));
     }
 
+    // Build and append a single entry row to the wall
+    renderSingleEntry(entry) {
+        const entryText = entry.text;
+        const timestamp = entry.timestamp;
+        const name = entry.name;
+
+        const entryDiv = document.createElement('div');
+        entryDiv.className = 'entry';
+        entryDiv.dataset.id = entry.id;
+        if (entry.is_pinned) entryDiv.classList.add('pinned');
+
+        // Auth-only: allow DnD to add to series on all walls.
+        // Avoid conflict with pinned reorder on rishu by skipping draggable for pinned rows.
+        if (this.isAuthenticated && (!entry.is_pinned || this.currentWall !== 'rishu')) {
+            entryDiv.setAttribute('draggable', 'true');
+            entryDiv.addEventListener('dragstart', (ev) => {
+                const payload = { id: entry.id, type: this.currentWall };
+                try { ev.dataTransfer.setData('application/json', JSON.stringify(payload)); } catch(_) {}
+                try { ev.dataTransfer.setData('text/plain', `${this.currentWall}:${entry.id}`); } catch(_) {}
+                ev.dataTransfer.effectAllowed = 'move';
+            });
+            entryDiv.addEventListener('dragend', () => {
+                const h = document.querySelector('.series-card.drag-over');
+                if (h) h.classList.remove('drag-over');
+            });
+            // Right-click context menu: add to series / create series / delete
+            entryDiv.addEventListener('contextmenu', (ev) => {
+                if (!this.isAuthenticated) return;
+                ev.preventDefault();
+                this.showEntryContextMenu(ev.clientX, ev.clientY, entry);
+            });
+        }
+        // Ensure pinned rows on rishu also get context menu (no DnD)
+        if (this.isAuthenticated && entry.is_pinned && this.currentWall === 'rishu') {
+            entryDiv.addEventListener('contextmenu', (ev) => {
+                ev.preventDefault();
+                this.showEntryContextMenu(ev.clientX, ev.clientY, entry);
+            });
+        }
+
+        const timestampSpan = document.createElement('span');
+        timestampSpan.className = 'entry-timestamp';
+        timestampSpan.textContent = timestamp ? this.formatTimestamp(timestamp) : '';
+
+        if (name && this.currentWall === 'friend') {
+            const nameSpan = document.createElement('span');
+            nameSpan.className = 'entry-name';
+            nameSpan.textContent = name;
+            entryDiv.appendChild(timestampSpan);
+            entryDiv.appendChild(nameSpan);
+        } else {
+            entryDiv.appendChild(timestampSpan);
+        }
+
+        // Spotify thumbnail for songs wall (after timestamp)
+        if (this.currentWall === 'songs' && entry.spotify_url) {
+            const thumb = document.createElement('img');
+            thumb.alt = 'Album art';
+            thumb.className = 'spotify-thumb';
+            this.fetchSpotifyArt(entry.spotify_url).then((url) => { if (url) thumb.src = url; });
+            entryDiv.appendChild(thumb);
+        }
+
+        // Video thumbnail for video walls (based on selected wall slug/name)
+        if (this.currentWall === 'rishu' && this.isVideoWall()) {
+            const url = this.extractFirstUrl(entryText);
+            if (url) {
+                const vthumb = document.createElement('img');
+                vthumb.alt = 'Video thumbnail';
+                vthumb.className = 'video-thumb';
+                this.fetchVideoMeta(url).then(meta => { if (meta && meta.thumbnail_url) vthumb.src = meta.thumbnail_url; }).catch(()=>{});
+                entryDiv.appendChild(vthumb);
+            }
+        }
+
+        // Title + divider + body text
+        const hasTitle = typeof entry.title === 'string' && entry.title.trim().length > 0;
+        if (hasTitle) {
+            const titleSpan = document.createElement('span');
+            titleSpan.className = 'entry-title';
+            titleSpan.textContent = entry.title.trim();
+            entryDiv.appendChild(titleSpan);
+
+            const vdiv = document.createElement('span');
+            vdiv.className = 'vdiv';
+            entryDiv.appendChild(vdiv);
+        }
+
+        const textSpan = document.createElement('span');
+        textSpan.className = 'entry-text';
+        if (this.currentWall === 'rishu' && this.isVideoWall()) {
+            const url = this.extractFirstUrl(entryText);
+            if (url) {
+                // Prefer showing the video title as link text when available
+                const base = document.createElement('a');
+                base.href = url;
+                base.target = '_blank';
+                base.rel = 'noopener noreferrer';
+                base.textContent = entry.title && entry.title.trim() ? entry.title.trim() : url;
+                textSpan.innerHTML = '';
+                textSpan.appendChild(base);
+                // If no title, fetch meta to update text content lazily
+                if (!entry.title || !entry.title.trim()) {
+                    this.fetchVideoMeta(url).then(meta => {
+                        if (meta && meta.title) { base.textContent = meta.title; }
+                    }).catch(()=>{});
+                }
+            } else {
+                textSpan.innerHTML = this.linkify(entryText);
+            }
+        } else {
+            textSpan.innerHTML = this.linkify(entryText);
+        }
+
+        entryDiv.appendChild(textSpan);
+
+        // Entry click: view on public/friends, edit on drafts (auth only)
+        entryDiv.addEventListener('click', (ev) => {
+            // Allow clicking links without opening modal
+            if (ev.target && ev.target.closest && ev.target.closest('a')) {
+                ev.stopPropagation();
+                return;
+            }
+            if (Date.now() < (this._suppressClickUntil || 0)) {
+                return;
+            }
+            if (this.currentWall === 'drafts' && this.isAuthenticated) {
+                this.showEditForm(entry);
+            } else if (this.currentWall === 'rishu' && this.isVideoWall()) {
+                const url = this.extractFirstUrl(entry.text || '');
+                if (url) { this.showVideoModal(entry); return; }
+                this.showEntry(entry);
+            } else {
+                this.showEntry(entry);
+            }
+        });
+
+        // Pin/unpin + drag controls on rishu wall
+        if (this.currentWall === 'rishu') {
+            const pinBtn = document.createElement('button');
+            pinBtn.className = 'pin-btn';
+            pinBtn.type = 'button';
+            pinBtn.title = entry.is_pinned ? 'Unpin' : 'Pin';
+            pinBtn.setAttribute('aria-label', entry.is_pinned ? 'Unpin entry' : 'Pin entry');
+            pinBtn.innerHTML = `
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                  <path d="M8 3 H16 L14 8 V11 L17 14 V15 H7 V14 L10 11 V8 Z"/>
+                  <path d="M12 15 V21"/>
+                </svg>
+            `;
+            // Prevent row-drag from starting when interacting with the pin button
+            pinBtn.addEventListener('mousedown', (ev) => { ev.stopPropagation(); });
+            pinBtn.addEventListener('touchstart', (ev) => { ev.stopPropagation(); }, { passive: true });
+            pinBtn.addEventListener('click', (ev) => {
+                ev.stopPropagation();
+                this.togglePin(entry);
+            });
+            entryDiv.appendChild(pinBtn);
+
+            // Enable custom mouse-based dragging only for pinned entries
+            if (entry.is_pinned) {
+                entryDiv.classList.add('draggable');
+                entryDiv.addEventListener('mousedown', (e) => this.onMouseDownDrag(e, entryDiv));
+                entryDiv.addEventListener('touchstart', (e) => this.onTouchStartDrag(e, entryDiv), { passive: false });
+            }
+        }
+
+        this.dom.wall.appendChild(entryDiv);
+    }
+
     getSeriesMemberIdsForCurrentWall() {
         if (!Array.isArray(this.series) || !this.series.length) return new Set();
         const wall = this.currentWall;
@@ -2398,6 +2687,24 @@ class WallApp {
             }
         }
         return ids;
+    }
+
+    // Combined pinned layout (entries + series)
+    getPinnedLayoutForWall(wall) {
+        try {
+            const raw = localStorage.getItem('pinnedLayout');
+            const data = raw ? JSON.parse(raw) : {};
+            const arr = data[String(wall || 'rishu')];
+            return Array.isArray(arr) ? arr.filter(t => typeof t === 'string') : [];
+        } catch (_) { return []; }
+    }
+    setPinnedLayoutForWall(wall, arr) {
+        try {
+            const raw = localStorage.getItem('pinnedLayout');
+            const data = raw ? JSON.parse(raw) : {};
+            data[String(wall || 'rishu')] = Array.isArray(arr) ? arr : [];
+            localStorage.setItem('pinnedLayout', JSON.stringify(data));
+        } catch (_) {}
     }
 
 
@@ -2638,6 +2945,7 @@ class WallApp {
             <textarea id="entryText" placeholder="Describe your idea..." required></textarea>
             <div style="display:flex; gap:8px; align-items:center;">
                 <button type="button" id="saveIdeaBtn" class="btn-liquid clear">Publish</button>
+                <button type="button" id="createSeriesBtn" class="btn-liquid clear" style="margin-left:auto;">Create series…</button>
             </div>
         `;
         this.dom.modalBody.innerHTML = '';
@@ -2665,6 +2973,22 @@ class WallApp {
                 else alert('Error saving project idea.');
             }
         });
+        // Create series button
+        const csBtn = form.querySelector('#createSeriesBtn');
+        if (csBtn) {
+            csBtn.addEventListener('click', async (e) => {
+                e.preventDefault();
+                const name = prompt('Series title');
+                if (!name) return;
+                try {
+                    const s = await this.createSeries(name, 'ideas');
+                    this.series = [s, ...(this.series || [])];
+                    this.renderEntries();
+                    this.closeModal();
+                } catch (err) { alert(String(err && err.message) || 'Failed to create series'); }
+            });
+        }
+
         this.openModal();
         setTimeout(() => document.getElementById('entryTitle')?.focus(), 100);
     }
@@ -2823,6 +3147,7 @@ class WallApp {
                 <button type="submit" id="publishBtn" class="btn-liquid clear">Publish</button>
                 ${this.currentWall === 'drafts' ? `<select id="publishTarget" class="select-liquid" style="margin-left:8px;"><option value="rishu">rishu's wall</option><option value="tech">tech notes</option></select>` : ''}
                 <button type="button" id="saveDraftBtn" class="btn-liquid clear">Save Draft</button>
+                ${this.currentWall !== 'friend' ? `<button type="button" id="createSeriesBtn" class="btn-liquid clear" style="margin-left:auto;">Create series…</button>` : ''}
             </div>
         `;
 
@@ -2867,6 +3192,25 @@ class WallApp {
                     } else {
                         alert('Error saving draft. Please try again.');
                     }
+                }
+            });
+        }
+
+        // Create series button (optional)
+        const csBtn = form.querySelector('#createSeriesBtn');
+        if (csBtn) {
+            csBtn.addEventListener('click', async (e) => {
+                e.preventDefault();
+                const name = prompt('Series title');
+                if (!name) return;
+                try {
+                    const s = await this.createSeries(name, this.currentWall);
+                    this.series = [s, ...(this.series || [])];
+                    this.renderEntries();
+                    this.closeModal();
+                } catch (err) {
+                    const msg = String(err && err.message) || 'Failed to create series';
+                    alert(msg);
                 }
             });
         }
@@ -2959,6 +3303,7 @@ class WallApp {
             <input type="url" id="spotifyUrl" placeholder="Spotify track/album URL (optional)">
             <div style="display:flex; gap:8px; align-items:center;">
                 <button type="button" id="saveSongBtn" class="btn-liquid clear">Publish</button>
+                <button type="button" id="createSeriesBtn" class="btn-liquid clear" style="margin-left:auto;">Create series…</button>
             </div>
         `;
         this.dom.modalBody.innerHTML = '';
@@ -2987,6 +3332,22 @@ class WallApp {
                 else alert('Error saving song quote.');
             }
         });
+        // Create series button
+        const csBtn = form.querySelector('#createSeriesBtn');
+        if (csBtn) {
+            csBtn.addEventListener('click', async (e) => {
+                e.preventDefault();
+                const name = prompt('Series title');
+                if (!name) return;
+                try {
+                    const s = await this.createSeries(name, 'songs');
+                    this.series = [s, ...(this.series || [])];
+                    this.renderEntries();
+                    this.closeModal();
+                } catch (err) { alert(String(err && err.message) || 'Failed to create series'); }
+            });
+        }
+
         this.openModal();
         setTimeout(() => document.getElementById('entryTitle')?.focus(), 100);
     }
@@ -3133,7 +3494,10 @@ class WallApp {
             <h3>New Tech Note</h3>
             <input type="text" id="entryTitle" placeholder="Title (optional)">
             <textarea id=\"entryText\" placeholder=\"Write your note...\" required></textarea>
-            <button type=\"submit\" id=\"techSubmitBtn\" class=\"btn-liquid clear\">Save</button>
+            <div style=\"display:flex; gap:8px; align-items:center;\">
+                <button type=\"submit\" id=\"techSubmitBtn\" class=\"btn-liquid clear\">Save</button>
+                <button type=\"button\" id=\"createSeriesBtn\" class=\"btn-liquid clear\" style=\"margin-left:auto;\">Create series…</button>
+            </div>
         `;
 
         this.dom.modalBody.innerHTML = '';
@@ -3204,6 +3568,22 @@ class WallApp {
                     formEl.classList.remove('is-submitting');
                 });
         });
+
+        // Create series button
+        const csBtn = form.querySelector('#createSeriesBtn');
+        if (csBtn) {
+            csBtn.addEventListener('click', async (e) => {
+                e.preventDefault();
+                const name = prompt('Series title');
+                if (!name) return;
+                try {
+                    const s = await this.createSeries(name, 'tech');
+                    this.series = [s, ...(this.series || [])];
+                    this.renderEntries();
+                    this.closeModal();
+                } catch (err) { alert(String(err && err.message) || 'Failed to create series'); }
+            });
+        }
 
         this.openModal();
         setTimeout(() => document.getElementById('entryTitle')?.focus(), 100);
@@ -3830,16 +4210,18 @@ class WallApp {
         }
     }
 
-    // Custom mouse/touch drag for pinned rows
+    // Custom mouse/touch drag for pinned rows (entries and series)
     onMouseDownDrag(e, el) {
         if (this.currentWall !== 'rishu') return;
         // left button only
         if (e.button !== undefined && e.button !== 0) return;
-        // Ignore drags starting on the pin button
-        if (e.target && e.target.closest && e.target.closest('.pin-btn')) return;
+        // Ignore drags starting on the pin button or series toggle
+        if (e.target && e.target.closest && (e.target.closest('.pin-btn') || e.target.closest('.series-toggle'))) return;
         // If not authenticated, do not allow drag and do not prompt;
         // allow the normal click to proceed.
         if (!this.isAuthenticated) return;
+        // Only allow dragging for pinned items
+        if (!el.classList.contains('pinned')) return;
         // Do not preventDefault here; wait to see if it becomes a drag
         this._dragIntent = {
             type: 'mouse',
@@ -3854,8 +4236,9 @@ class WallApp {
 
     onTouchStartDrag(e, el) {
         if (this.currentWall !== 'rishu') return;
-        if (e.target && e.target.closest && e.target.closest('.pin-btn')) return;
+        if (e.target && e.target.closest && (e.target.closest('.pin-btn') || e.target.closest('.series-toggle'))) return;
         if (!this.isAuthenticated) return; // do not allow drag or prompt; treat as normal tap
+        if (!el.classList.contains('pinned')) return;
         if (e.touches && e.touches.length > 0) {
             // Do not preventDefault yet; wait to see if it becomes a drag
             const t = e.touches[0];
@@ -3928,24 +4311,40 @@ class WallApp {
     startMouseDrag(el, startY) {
         const elRect = el.getBoundingClientRect();
 
-        // Compute pinned bounds (top of first pinned to bottom of last pinned)
+        // Compute pinned bounds considering all pinned items (entries + series)
         const pinnedEls = Array.from(this.dom.wall.querySelectorAll('.entry.pinned'));
         if (pinnedEls.length === 0) return;
         const firstRect = pinnedEls[0].getBoundingClientRect();
         const lastRect = pinnedEls[pinnedEls.length - 1].getBoundingClientRect();
 
+        // If dragging an expanded series, move its items with the card
+        let itemsWrap = null;
+        let itemsOffset = 0;
+        let totalHeight = elRect.height;
+        if (el.classList.contains('series-card')) {
+            const maybe = el.nextSibling;
+            if (maybe && maybe.classList && maybe.classList.contains('series-items') && !maybe.classList.contains('hidden')) {
+                const ir = maybe.getBoundingClientRect();
+                itemsWrap = maybe;
+                itemsOffset = ir.top - elRect.top;
+                totalHeight += ir.height;
+            }
+        }
+
         this._mouseDrag = {
             active: true,
             el,
+            itemsWrap,
+            itemsOffset,
             offsetY: startY - elRect.top,
             placeholder: null,
-            bounds: { minY: firstRect.top, maxY: lastRect.bottom, height: elRect.height }
+            bounds: { minY: firstRect.top, maxY: lastRect.bottom, height: totalHeight }
         };
 
-        // Insert placeholder in original position
+        // Insert placeholder in original position sized to cover card (+ items if expanded)
         const placeholder = document.createElement('div');
         placeholder.className = 'entry pinned placeholder';
-        placeholder.style.height = `${elRect.height}px`;
+        placeholder.style.height = `${totalHeight}px`;
         this._mouseDrag.placeholder = placeholder;
         el.parentNode.insertBefore(placeholder, el);
 
@@ -3954,6 +4353,13 @@ class WallApp {
         el.style.width = `${elRect.width}px`;
         el.style.left = `${elRect.left}px`;
         el.style.top = `${elRect.top}px`;
+        if (itemsWrap) {
+            const ir = itemsWrap.getBoundingClientRect();
+            itemsWrap.classList.add('dragging-abs');
+            itemsWrap.style.width = `${ir.width}px`;
+            itemsWrap.style.left = `${ir.left}px`;
+            itemsWrap.style.top = `${elRect.top + itemsOffset}px`;
+        }
 
         document.body.classList.add('no-select');
     }
@@ -3994,6 +4400,9 @@ class WallApp {
 
         // Follow cursor within bounds
         el.style.top = `${clampedTop}px`;
+        if (drag.itemsWrap) {
+            drag.itemsWrap.style.top = `${clampedTop + (drag.itemsOffset || 0)}px`;
+        }
 
         // Use clamped cursor position for placeholder placement
         const clampedCursorY = clampedTop + (drag.offsetY || 0);
@@ -4022,19 +4431,43 @@ class WallApp {
         // Place element where placeholder is
         if (placeholder && placeholder.parentNode) {
             placeholder.parentNode.insertBefore(el, placeholder);
+            // Ensure items wrap follows immediately after the card (expanded or collapsed)
+            if (el.classList && el.classList.contains('series-card')) {
+                const sid = el.dataset.seriesId;
+                const wrap = document.querySelector(`.series-items[data-series-id="${sid}"]`);
+                if (wrap && wrap.parentNode) {
+                    if (el.nextSibling) el.parentNode.insertBefore(wrap, el.nextSibling);
+                    else el.parentNode.appendChild(wrap);
+                }
+            }
             placeholder.remove();
         }
 
         this._mouseDrag = { active: false, el: null, placeholder: null };
         document.body.classList.remove('no-select');
 
+        // Clear styles on any moved items
+        if (drag.itemsWrap) {
+            drag.itemsWrap.classList.remove('dragging-abs');
+            drag.itemsWrap.style.position = '';
+            drag.itemsWrap.style.top = '';
+            drag.itemsWrap.style.left = '';
+            drag.itemsWrap.style.width = '';
+        }
+
         // Remove move listeners
         document.removeEventListener('mousemove', this.onMouseMoveDrag);
         document.removeEventListener('touchmove', this.onTouchMoveDrag);
 
         // Persist new order and update local state
-        const els = Array.from(this.dom.wall.querySelectorAll('.entry.pinned'));
-        const orderedIds = els.map(el => el.dataset.id);
+        // 1) Combined layout (entries + series)
+        const pinnedNodes = Array.from(this.dom.wall.querySelectorAll('.entry.pinned'));
+        const combined = pinnedNodes.map(node => node.classList.contains('series-card') ? `s:${node.dataset.seriesId}` : `e:${node.dataset.id}`);
+        this.setPinnedLayoutForWall(this.currentWall, combined);
+
+        // 2) Entries: save order to backend (relative order among entries only)
+        const entryNodes = pinnedNodes.filter(n => !n.classList.contains('series-card'));
+        const orderedIds = entryNodes.map(el => el.dataset.id);
         const map = new Map(orderedIds.map((id, idx) => [id, idx]));
         this.entries.forEach(en => {
             if (en.is_pinned && map.has(String(en.id))) {
@@ -4044,11 +4477,17 @@ class WallApp {
         if (this.currentWall === 'rishu') this.entriesCache.rishu = this.entries;
         this.savePinnedOrder(orderedIds).catch(() => alert('Failed to save order'));
 
+        // 3) Series: also save simple pinned series order list for fallback
+        const seriesCards = pinnedNodes.filter(n => n.classList.contains('series-card'));
+        const seriesIds = seriesCards.map(c => c.dataset.seriesId).filter(Boolean);
+        this.setPinnedSeriesIdsForWall(this.currentWall, seriesIds.map(String));
+
         // Suppress the synthetic click that may fire right after dragging
         this._suppressClickUntil = Date.now() + 400;
     }
 
     getPinnedAfterElement(y) {
+        // Consider both entries and series as part of the pinned lane
         const selector = '.entry.pinned:not(.dragging-abs):not(.placeholder)';
         const draggableElements = [...this.dom.wall.querySelectorAll(selector)];
         return draggableElements.reduce((closest, child) => {
@@ -4059,6 +4498,174 @@ class WallApp {
             } else {
                 return closest;
             }
+        }, { offset: Number.NEGATIVE_INFINITY }).element;
+    }
+
+    // Dragging for pinned series cards (local-only reordering)
+    onMouseDownDragSeries(e, el) {
+        // ignore if starting on pin or toggle buttons
+        if (e.button !== undefined && e.button !== 0) return;
+        if (e.target && e.target.closest && (e.target.closest('.pin-btn') || e.target.closest('.series-toggle'))) return;
+        if (!this.isAuthenticated) return;
+        // Only allow dragging when this series is pinned and there are ≥2 pinned series
+        if (!el.classList.contains('pinned')) return;
+        const pinnedSeriesEls = this.dom.wall.querySelectorAll('.series-card.pinned');
+        if (!pinnedSeriesEls || pinnedSeriesEls.length < 2) return;
+        this._seriesDragIntent = { type: 'mouse', el, startX: e.clientX, startY: e.clientY, started: false };
+        document.addEventListener('mousemove', this.onMouseMoveMaybeStartSeries, { passive: true });
+        document.addEventListener('mouseup', this.onMouseUpMaybeStartSeries, { once: true });
+    }
+    onTouchStartDragSeries(e, el) {
+        if (!this.isAuthenticated) return;
+        if (e.target && e.target.closest && (e.target.closest('.pin-btn') || e.target.closest('.series-toggle'))) return;
+        if (!el.classList.contains('pinned')) return;
+        const pinnedSeriesEls = this.dom.wall.querySelectorAll('.series-card.pinned');
+        if (!pinnedSeriesEls || pinnedSeriesEls.length < 2) return;
+        if (e.touches && e.touches.length > 0) {
+            const t = e.touches[0];
+            this._seriesDragIntent = { type: 'touch', el, startX: t.clientX, startY: t.clientY, started: false };
+            document.addEventListener('touchmove', this.onTouchMoveMaybeStartSeries, { passive: true });
+            document.addEventListener('touchend', this.onTouchEndMaybeStartSeries, { once: true });
+        }
+    }
+    onMouseMoveMaybeStartSeries = (e) => {
+        const intent = this._seriesDragIntent;
+        if (!intent || intent.type !== 'mouse' || intent.started) return;
+        const dy = Math.abs(e.clientY - intent.startY);
+        const dx = Math.abs(e.clientX - intent.startX);
+        const threshold = 5;
+        if (dy > threshold || dx > threshold) {
+            intent.started = true;
+            document.removeEventListener('mousemove', this.onMouseMoveMaybeStartSeries, { passive: true });
+            e.preventDefault();
+            this.startMouseDragSeries(intent.el, intent.startY);
+            document.addEventListener('mousemove', this.onMouseMoveDragSeries);
+            document.addEventListener('mouseup', this.onMouseUpDragSeries, { once: true });
+        }
+    }
+    onMouseUpMaybeStartSeries = (e) => {
+        document.removeEventListener('mousemove', this.onMouseMoveMaybeStartSeries, { passive: true });
+        this._seriesDragIntent = null;
+    }
+    onTouchMoveMaybeStartSeries = (e) => {
+        const intent = this._seriesDragIntent;
+        if (!intent || intent.type !== 'touch' || intent.started) return;
+        if (!(e.touches && e.touches.length > 0)) return;
+        const t = e.touches[0];
+        const dy = Math.abs(t.clientY - intent.startY);
+        const dx = Math.abs(t.clientX - intent.startX);
+        const threshold = 5;
+        if (dy > threshold || dx > threshold) {
+            intent.started = true;
+            document.removeEventListener('touchmove', this.onTouchMoveMaybeStartSeries, { passive: true });
+            e.preventDefault();
+            this.startMouseDragSeries(intent.el, intent.startY);
+            document.addEventListener('touchmove', this.onTouchMoveDragSeries, { passive: false });
+            document.addEventListener('touchend', this.onTouchEndDragSeries, { once: true });
+        }
+    }
+    onTouchEndMaybeStartSeries = (e) => {
+        document.removeEventListener('touchmove', this.onTouchMoveMaybeStartSeries, { passive: true });
+        this._seriesDragIntent = null;
+    }
+    startMouseDragSeries(el, startY) {
+        const elRect = el.getBoundingClientRect();
+        const seriesEls = Array.from(this.dom.wall.querySelectorAll('.series-card.pinned'));
+        if (seriesEls.length === 0) return;
+        const firstRect = seriesEls[0].getBoundingClientRect();
+        const lastRect = seriesEls[seriesEls.length - 1].getBoundingClientRect();
+        this._seriesMouseDrag = {
+            active: true,
+            el,
+            offsetY: startY - elRect.top,
+            placeholder: null,
+            bounds: { minY: firstRect.top, maxY: lastRect.bottom, height: elRect.height }
+        };
+        const placeholder = document.createElement('div');
+        // Include generic 'placeholder' class to hide content (CSS)
+        placeholder.className = 'entry series-card pinned placeholder placeholder-series';
+        placeholder.style.height = `${elRect.height}px`;
+        this._seriesMouseDrag.placeholder = placeholder;
+        el.parentNode.insertBefore(placeholder, el);
+        el.classList.add('dragging-abs');
+        el.style.width = `${elRect.width}px`;
+        el.style.left = `${elRect.left}px`;
+        el.style.top = `${elRect.top}px`;
+        document.body.classList.add('no-select');
+    }
+    onMouseMoveDragSeries = (e) => {
+        if (!this._seriesMouseDrag || !this._seriesMouseDrag.active) return;
+        e.preventDefault();
+        this.reorderWhileDraggingSeries(e.clientY);
+    }
+    onMouseUpDragSeries = (e) => {
+        if (!this._seriesMouseDrag || !this._seriesMouseDrag.active) return;
+        this.finishMouseDragSeries();
+    }
+    onTouchMoveDragSeries = (e) => {
+        if (!this._seriesMouseDrag || !this._seriesMouseDrag.active) return;
+        if (e.touches && e.touches.length > 0) {
+            e.preventDefault();
+            this.reorderWhileDraggingSeries(e.touches[0].clientY);
+        }
+    }
+    onTouchEndDragSeries = (e) => {
+        if (!this._seriesMouseDrag || !this._seriesMouseDrag.active) return;
+        this.finishMouseDragSeries();
+    }
+    reorderWhileDraggingSeries(y) {
+        const drag = this._seriesMouseDrag;
+        const el = drag.el;
+        const minTop = drag.bounds.minY;
+        const maxTop = drag.bounds.maxY - drag.bounds.height;
+        const unclampedTop = y - (drag.offsetY || 0);
+        const clampedTop = Math.max(minTop, Math.min(maxTop, unclampedTop));
+        el.style.top = `${clampedTop}px`;
+        const clampedCursorY = clampedTop + (drag.offsetY || 0);
+        const afterEl = this.getPinnedSeriesAfterElement(clampedCursorY);
+        const placeholder = drag.placeholder;
+        if (afterEl == null) {
+            // insert before first pinned series (top of series block)
+            const firstSeries = this.dom.wall.querySelector('.series-card.pinned');
+            if (firstSeries) this.dom.wall.insertBefore(placeholder, firstSeries);
+        } else {
+            this.dom.wall.insertBefore(placeholder, afterEl);
+        }
+    }
+    finishMouseDragSeries() {
+        const drag = this._seriesMouseDrag;
+        const el = drag.el;
+        const placeholder = drag.placeholder;
+        if (el) {
+            el.classList.remove('dragging-abs');
+            el.style.position = '';
+            el.style.top = '';
+            el.style.left = '';
+            el.style.width = '';
+        }
+        if (placeholder && placeholder.parentNode) {
+            placeholder.parentNode.insertBefore(el, placeholder);
+            placeholder.remove();
+        }
+        this._seriesMouseDrag = { active: false, el: null, placeholder: null };
+        document.body.classList.remove('no-select');
+        document.removeEventListener('mousemove', this.onMouseMoveDragSeries);
+        document.removeEventListener('touchmove', this.onTouchMoveDragSeries);
+        // Persist new series pin order in localStorage
+        const cards = Array.from(this.dom.wall.querySelectorAll('.series-card.pinned'));
+        const orderedIds = cards.map(c => c.dataset.seriesId).filter(Boolean);
+        this.setPinnedSeriesIdsForWall(this.currentWall, orderedIds.map(String));
+        // suppress click
+        this._suppressClickUntil = Date.now() + 400;
+    }
+    getPinnedSeriesAfterElement(y) {
+        const selector = '.series-card.pinned:not(.dragging-abs):not(.placeholder-series)';
+        const els = [...this.dom.wall.querySelectorAll(selector)];
+        return els.reduce((closest, child) => {
+            const box = child.getBoundingClientRect();
+            const offset = y - box.top - box.height / 2;
+            if (offset < 0 && offset > closest.offset) return { offset, element: child };
+            return closest;
         }, { offset: Number.NEGATIVE_INFINITY }).element;
     }
 
