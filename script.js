@@ -487,10 +487,16 @@ class WallApp {
             if (this.currentWall === wallKey) {
                 this.prefetchSeriesItemsForCurrentWall().then(() => {
                     // Only re-render if still on same wall
-                    if (this.currentWall === wallKey) this.renderEntries();
-                }).catch(() => {});
+                    if (this.currentWall === wallKey) {
+                        this.renderEntries();
+                        if (this._pendingEntryId) this.openPendingEntry();
+                    }
+                }).catch(() => {
+                    if (this._pendingEntryId) this.openPendingEntry();
+                });
+            } else {
+                if (this._pendingEntryId) this.openPendingEntry();
             }
-            if (this._pendingEntryId) this.openPendingEntry();
         } catch (error) {
             console.error('Error loading entries:', error);
             // If we have no cache, don't keep spinner forever; show empty state
@@ -2410,20 +2416,14 @@ class WallApp {
         textSpan.innerHTML = this.linkify(en.text || '');
         row.appendChild(textSpan);
 
-        // click to open on appropriate wall
+        // click to open modal directly (avoid relying on hashchange which may not fire twice)
         row.addEventListener('click', (ev) => {
             if (ev.target && ev.target.closest && ev.target.closest('a')) {
                 ev.stopPropagation();
                 return;
             }
-            const id = en.id;
-            const h = type === 'rishu' ? `#rishu&entry=${id}`
-                     : type === 'friend' ? `#friend&entry=${id}`
-                     : type === 'tech' ? `#tech&entry=${id}`
-                     : type === 'songs' ? `#songs&entry=${id}`
-                     : type === 'ideas' ? `#ideas&entry=${id}`
-                     : `#rishu&entry=${id}`;
-            location.hash = h;
+            if (Date.now() < (this._suppressClickUntil || 0)) return;
+            this.showEntry(en);
         });
 
         // Right-click to edit/remove when authenticated
@@ -4187,10 +4187,20 @@ class WallApp {
 
     openPendingEntry() {
         const id = this._pendingEntryId;
-        this._pendingEntryId = null;
         if (!id) return;
-        const entry = (this.entries || []).find(e => String(e.id) === String(id));
-        if (!entry) return;
+        // First try from the current wall's visible entries
+        let entry = (this.entries || []).find(e => String(e.id) === String(id));
+        // If not present (e.g., item is part of a series and hidden from feed), search series items cache
+        if (!entry && this.series && this.series.length) {
+            for (const s of this.series) {
+                const arr = this.seriesItemsCache.get(String(s.id));
+                if (!Array.isArray(arr)) continue;
+                const found = arr.find(it => String(it && it.id) === String(id) && (String((it && it._type) || this.currentWall) === String(this.currentWall)));
+                if (found) { entry = found; break; }
+            }
+        }
+        if (!entry) return; // keep _pendingEntryId to retry after prefetch
+        this._pendingEntryId = null;
         if (this.currentWall === 'drafts' && this.isAuthenticated) {
             this.showEditForm(entry);
         } else {
