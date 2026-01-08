@@ -1766,27 +1766,38 @@ class WallApp {
         const pinnedEntries = sorted.filter(e => e.is_pinned);
         const unpinnedEntries = sorted.filter(e => !e.is_pinned);
 
-        // Pinned lane: combine pinned entries + pinned series in saved layout order
+        // Pinned lane: combine pinned entries + pinned series; prefer server state/order
         if (allowSeries && hasSeries) {
-            const pinnedSeriesIds = this.getPinnedSeriesIdsForWall(this.currentWall).map(String);
-            const pinnedSeries = (this.series || []).filter(s => pinnedSeriesIds.includes(String(s.id)));
-            const layout = this.getPinnedLayoutForWall(this.currentWall);
+            const localPinnedIds = this.getPinnedSeriesIdsForWall(this.currentWall).map(String);
+            let pinnedSeries = (this.series || []).filter(s => !!s.is_pinned);
+            if (localPinnedIds.length) {
+                const mapL = new Map(pinnedSeries.map(s => [String(s.id), s]));
+                pinnedSeries = localPinnedIds.map(id => mapL.get(id)).filter(Boolean).concat(
+                    pinnedSeries.filter(s => !localPinnedIds.includes(String(s.id)))
+                );
+            } else {
+                pinnedSeries.sort((a,b) => (a.pin_order ?? 0) - (b.pin_order ?? 0));
+            }
+            const layout = this.getPinnedLayoutForWall(this.currentWall) || [];
             const entryMap = new Map(pinnedEntries.map(e => [String(e.id), e]));
             const seriesMap = new Map(pinnedSeries.map(s => [String(s.id), s]));
             const seen = new Set();
             const appendEntry = (e) => this.renderSingleEntry(e);
             const appendSeries = (s) => { const c = this.renderSeriesCard(s); this.dom.wall.appendChild(c); };
-            // Render by saved layout
-            for (const tok of layout) {
-                if (seen.has(tok)) continue;
-                const [k, id] = tok.split(':');
-                if (k === 'e' && entryMap.has(id)) { appendEntry(entryMap.get(id)); entryMap.delete(id); seen.add(tok); }
-                else if (k === 's' && seriesMap.has(id)) { appendSeries(seriesMap.get(id)); seriesMap.delete(id); seen.add(tok); }
+            if (layout.length) {
+                for (const tok of layout) {
+                    if (seen.has(tok)) continue;
+                    const [k, id] = tok.split(':');
+                    if (k === 'e' && entryMap.has(id)) { appendEntry(entryMap.get(id)); entryMap.delete(id); seen.add(tok); }
+                    else if (k === 's' && seriesMap.has(id)) { appendSeries(seriesMap.get(id)); seriesMap.delete(id); seen.add(tok); }
+                }
+                Array.from(entryMap.values()).sort((a,b) => (a.pin_order ?? 0) - (b.pin_order ?? 0)).forEach(appendEntry);
+                Array.from(seriesMap.values()).forEach(appendSeries);
+            } else {
+                // Default: pinned entries followed by pinned series
+                Array.from(entryMap.values()).sort((a,b) => (a.pin_order ?? 0) - (b.pin_order ?? 0)).forEach(appendEntry);
+                pinnedSeries.forEach(appendSeries);
             }
-            // Remaining pinned entries (by pin_order)
-            Array.from(entryMap.values()).sort((a,b) => (a.pin_order ?? 0) - (b.pin_order ?? 0)).forEach(appendEntry);
-            // Remaining pinned series (in pinnedSeriesIds order)
-            pinnedSeriesIds.filter(id => seriesMap.has(id)).forEach(id => appendSeries(seriesMap.get(id)));
         } else {
             // No series integration; render pinned entries in order
             pinnedEntries.forEach(e => this.renderSingleEntry(e));
@@ -1794,8 +1805,7 @@ class WallApp {
 
         // Unpinned series appear after pinned lane, before unpinned entries
         if (allowSeries && hasSeries) {
-            const pinnedSeriesIds = this.getPinnedSeriesIdsForWall(this.currentWall).map(String);
-            const unpinnedSeries = (this.series || []).filter(s => !pinnedSeriesIds.includes(String(s.id)));
+            const unpinnedSeries = (this.series || []).filter(s => !s.is_pinned);
             unpinnedSeries.forEach(s => {
                 const card = this.renderSeriesCard(s);
                 this.dom.wall.appendChild(card);
@@ -1834,7 +1844,7 @@ class WallApp {
         const card = document.createElement('div');
         card.className = 'entry series-card';
         card.dataset.seriesId = String(series.id);
-        const isPinnedSeries = this.isSeriesPinned(series.id);
+        const isPinnedSeries = !!series.is_pinned || this.isSeriesPinned(series.id);
         if (isPinnedSeries) card.classList.add('pinned');
         // timestamp placeholder (hidden via CSS for series-card)
         const ts = document.createElement('span');
@@ -1877,10 +1887,18 @@ class WallApp {
                   <path d="M12 15 V21"/>
                 </svg>
             `;
-            pinBtn.addEventListener('click', (e) => {
+            pinBtn.addEventListener('click', async (e) => {
                 e.stopPropagation();
                 if (!this.isAuthenticated) { this.showPasswordForm(); return; }
-                this.toggleSeriesPin(series.id);
+                try {
+                    const willPin = !series.is_pinned;
+                    await this.pinSeries(series.id, willPin);
+                    series.is_pinned = willPin;
+                    if (!willPin) series.pin_order = null;
+                    this.renderEntries();
+                } catch (err) {
+                    alert('Failed to update series pin.');
+                }
             });
             card.appendChild(pinBtn);
         }
@@ -2455,30 +2473,39 @@ class WallApp {
             localStorage.setItem('pinnedSeries', JSON.stringify(data));
         } catch (_) {}
     }
+    async reorderSeriesPins(ids) {
+        const resp = await fetch('/api/series', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ _action: 'reorder', ids, password: this.tempPassword })
+        });
+        const result = await resp.json().catch(() => ({}));
+        if (!resp.ok) throw new Error(result.error || 'Failed to reorder series');
+        return true;
+    }
     isSeriesPinned(seriesId) {
         const ids = this.getPinnedSeriesIdsForWall(this.currentWall);
         return ids.includes(String(seriesId)) || ids.includes(Number(seriesId));
     }
     toggleSeriesPin(seriesId) {
+        // Deprecated local toggle; kept for fallback only
         const ids = this.getPinnedSeriesIdsForWall(this.currentWall);
         const sid = String(seriesId);
         const idx = ids.indexOf(sid);
         if (idx === -1) ids.unshift(sid); else ids.splice(idx, 1);
         this.setPinnedSeriesIdsForWall(this.currentWall, ids);
-        // Update combined layout: add/remove this series at front when pinning
-        let layout = this.getPinnedLayoutForWall(this.currentWall);
-        const token = `s:${sid}`;
-        if (idx === -1) {
-            // pin: prepend if not present
-            layout = layout.filter(t => t !== token);
-            layout.unshift(token);
-        } else {
-            // unpin: remove from layout
-            layout = layout.filter(t => t !== token);
-        }
-        this.setPinnedLayoutForWall(this.currentWall, layout);
-        // Rerender to reflect new placement
         this.renderEntries();
+    }
+
+    async pinSeries(id, pin) {
+        const resp = await fetch('/api/series', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ _action: 'pin', id, pin, password: this.tempPassword })
+        });
+        const result = await resp.json().catch(() => ({}));
+        if (!resp.ok) throw new Error(result.error || 'Failed to pin series');
+        return true;
     }
 
     showEntryContextMenu(x, y, entry) {
@@ -4772,10 +4799,11 @@ class WallApp {
         if (this.currentWall === 'rishu') this.entriesCache.rishu = this.entries;
         this.savePinnedOrder(orderedIds).catch(() => alert('Failed to save order'));
 
-        // 3) Series: also save simple pinned series order list for fallback
+        // 3) Series: persist server-side order and keep local fallback
         const seriesCards = pinnedNodes.filter(n => n.classList.contains('series-card'));
         const seriesIds = seriesCards.map(c => c.dataset.seriesId).filter(Boolean);
         this.setPinnedSeriesIdsForWall(this.currentWall, seriesIds.map(String));
+        this.reorderSeriesPins(seriesIds).catch(() => {});
 
         // Suppress the synthetic click that may fire right after dragging
         this._suppressClickUntil = Date.now() + 400;

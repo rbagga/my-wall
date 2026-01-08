@@ -330,13 +330,20 @@ async function seriesHandler(req, res) {
       const allowed = new Set(['rishu','friend','tech','songs','ideas']);
       let q;
       if (wall && allowed.has(wall)) {
-        q = await supabase.from('series').select('*').eq('home_wall', wall).order('created_at', { ascending: false });
+        q = await supabase.from('series').select('*').eq('home_wall', wall)
+          .order('is_pinned', { ascending: false })
+          .order('pin_order', { ascending: true, nullsFirst: false })
+          .order('created_at', { ascending: false });
         if (q.error && String(q.error.code) === '42703') {
           // Column home_wall missing – fallback to no filter
-          q = await supabase.from('series').select('*').order('created_at', { ascending: false });
+          q = await supabase.from('series').select('*')
+            .order('created_at', { ascending: false });
         }
       } else {
-        q = await supabase.from('series').select('*').order('created_at', { ascending: false });
+        q = await supabase.from('series').select('*')
+          .order('is_pinned', { ascending: false })
+          .order('pin_order', { ascending: true, nullsFirst: false })
+          .order('created_at', { ascending: false });
       }
       if (q.error) {
         // Table likely missing; return empty list so UI can still render
@@ -367,6 +374,46 @@ async function seriesHandler(req, res) {
   }
   if (req.method === 'POST') {
     try {
+      const { _action } = req.body || {};
+      // Extended actions for pin/unpin and reorder within the same endpoint
+      if (_action === 'pin') {
+        const { id, pin, password } = req.body || {};
+        if (!id || typeof pin === 'undefined') return res.status(400).json({ error: 'id and pin are required' });
+        if (password !== process.env.WALL_PASSWORD) return res.status(401).json({ error: 'Invalid password' });
+        if (pin) {
+          const maxRow = await supabase
+            .from('series')
+            .select('pin_order')
+            .eq('is_pinned', true)
+            .order('pin_order', { ascending: false, nullsFirst: false })
+            .limit(1)
+            .maybeSingle();
+          if (maxRow.error && String(maxRow.error.code) === '42703') {
+            return res.status(400).json({ error: 'Series pinning requires DB migration. Please add is_pinned and pin_order columns.' });
+          }
+          const nextOrder = (maxRow && maxRow.data && typeof maxRow.data.pin_order === 'number') ? (maxRow.data.pin_order + 1) : 0;
+          const { error: upErr } = await supabase.from('series').update({ is_pinned: true, pin_order: nextOrder }).eq('id', id);
+          if (upErr) throw upErr;
+        } else {
+          const { error: upErr } = await supabase.from('series').update({ is_pinned: false, pin_order: null }).eq('id', id);
+          if (upErr) throw upErr;
+        }
+        return res.status(200).json({ ok: true });
+      }
+      if (_action === 'reorder') {
+        const { ids, password } = req.body || {};
+        if (!Array.isArray(ids)) return res.status(400).json({ error: 'ids are required' });
+        if (password !== process.env.WALL_PASSWORD) return res.status(401).json({ error: 'Invalid password' });
+        for (let i = 0; i < ids.length; i++) {
+          const id = ids[i];
+          const { error } = await supabase.from('series').update({ is_pinned: true, pin_order: i }).eq('id', id);
+          if (error) {
+            if (String(error.code) === '42703') return res.status(400).json({ error: 'Series pin ordering requires DB migration.' });
+            throw error;
+          }
+        }
+        return res.status(200).json({ ok: true });
+      }
       const { title, password, wall, home_wall } = req.body || {};
       if (!title || !String(title).trim()) return res.status(400).json({ error: 'Title is required' });
       if (password !== process.env.WALL_PASSWORD) return res.status(401).json({ error: 'Invalid password' });
