@@ -449,6 +449,26 @@ async function seriesItemsHandler(req, res) {
       return res.status(500).json({ error: error.message });
     }
   }
+  if (req.method === 'PATCH' || req.method === 'PUT') {
+    try {
+      const { series_id, ordered_ids, password } = req.body || {};
+      if (!series_id || !Array.isArray(ordered_ids)) return res.status(400).json({ error: 'series_id and ordered_ids are required' });
+      if (password !== process.env.WALL_PASSWORD) return res.status(401).json({ error: 'Invalid password' });
+      // Update positions to match new order (0..n-1)
+      for (let i = 0; i < ordered_ids.length; i++) {
+        const source_id = ordered_ids[i];
+        const { error } = await supabase
+          .from('series_items')
+          .update({ position: i })
+          .eq('series_id', series_id)
+          .eq('source_id', source_id);
+        if (error) throw error;
+      }
+      return res.status(200).json({ ok: true });
+    } catch (error) {
+      return res.status(500).json({ error: error.message });
+    }
+  }
   if (req.method === 'POST') {
     // add item
     try {

@@ -1904,10 +1904,13 @@ class WallApp {
                 itemsWrap.appendChild(empty);
                 return;
             }
+            // Default: newest at bottom, which aligns with position order from backend
             items.forEach(en => {
                 const row = this.buildSeriesEntryRow(en);
                 itemsWrap.appendChild(row);
             });
+            // Enable drag reorder within this series (auth only)
+            if (this.isAuthenticated) this.enableSeriesItemsDnD(itemsWrap, sid);
         };
 
         const toggleOpen = async () => {
@@ -1985,6 +1988,64 @@ class WallApp {
         }
 
         return card;
+    }
+
+    enableSeriesItemsDnD(container, seriesId) {
+        let dragging = null;
+        const rows = () => Array.from(container.querySelectorAll('.entry.series-item'));
+        rows().forEach(r => r.setAttribute('draggable', 'true'));
+
+        container.addEventListener('dragstart', (e) => {
+            const row = e.target && e.target.closest && e.target.closest('.entry.series-item');
+            if (!row) return;
+            dragging = row;
+            row.classList.add('dragging');
+            try { e.dataTransfer.effectAllowed = 'move'; } catch(_){}
+        });
+        container.addEventListener('dragend', () => {
+            if (dragging) dragging.classList.remove('dragging');
+            dragging = null;
+        });
+        container.addEventListener('dragover', (e) => {
+            if (!dragging) return;
+            try { e.preventDefault(); } catch(_){}
+            const after = this.getSeriesItemAfterElement(container, e.clientY);
+            if (after == null) {
+                container.appendChild(dragging);
+            } else {
+                container.insertBefore(dragging, after);
+            }
+        });
+        container.addEventListener('drop', async () => {
+            const order = rows().map(r => r.dataset.id);
+            try { await this.reorderSeriesItems(seriesId, order); } catch(_) {}
+        });
+    }
+
+    getSeriesItemAfterElement(container, y) {
+        const els = [...container.querySelectorAll('.entry.series-item:not(.dragging)')];
+        return els.reduce((closest, child) => {
+            const box = child.getBoundingClientRect();
+            const offset = y - box.top - box.height / 2;
+            if (offset < 0 && offset > closest.offset) return { offset, element: child };
+            return closest;
+        }, { offset: Number.NEGATIVE_INFINITY, element: null }).element;
+    }
+
+    async reorderSeriesItems(seriesId, orderedIds) {
+        const resp = await fetch('/api/series-items', {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ series_id: seriesId, ordered_ids: orderedIds, password: this.tempPassword })
+        });
+        const result = await resp.json().catch(() => ({}));
+        if (!resp.ok) throw new Error(result.error || 'Failed to reorder');
+        // Update local cache to match new order
+        const sid = String(seriesId);
+        const arr = this.seriesItemsCache.get(sid) || [];
+        const m = new Map(arr.map(it => [String(it.id), it]));
+        const next = orderedIds.map(id => m.get(String(id))).filter(Boolean);
+        this.seriesItemsCache.set(sid, next);
     }
 
     async createSeries(title, homeWallOverride = null) {
@@ -2126,7 +2187,8 @@ class WallApp {
                 const sid = String(series.id);
                 const curItems = this.seriesItemsCache.get(sid) || [];
                 const newItem = { ...created, _type: type };
-                this.seriesItemsCache.set(sid, [newItem, ...curItems]);
+                // Default: most recent at bottom
+                this.seriesItemsCache.set(sid, [...curItems, newItem]);
                 // If expanded, refresh items by re-toggling
                 const card = document.querySelector(`.series-card[data-series-id="${sid}"]`);
                 if (card && card.classList.contains('expanded')) {
