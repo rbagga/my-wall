@@ -204,7 +204,19 @@ body.dark-mode .entry:hover {
     height: auto;
     min-height: 34px;
     overflow: visible;
+    cursor: pointer;
 }
+.entry.series-card .series-toggle { cursor: pointer; }
+
+/* Series title landing modal */
+.entry-form.series-title-modal { min-height: 320px; padding-bottom: 72px; }
+.series-index { margin-top: 12px; display: grid; gap: 8px; }
+.series-index-row a {
+  color: inherit;
+  text-decoration: none;
+  border-bottom: 1px dashed rgba(120,140,220,0.35);
+}
+.series-index-row a:hover { text-decoration: underline; }
 .entry.series-card .entry-timestamp { display: none; }
 .entry.series-card .entry-text { display: none; }
 .entry.series-card .series-title {
@@ -799,6 +811,7 @@ body.dark-mode .modal-content {
     display: flex;
     justify-content: center;
     align-items: center;
+    gap: 14px;
 }
 
 .modal-actions button:not(.btn-liquid) {

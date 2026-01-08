@@ -385,6 +385,10 @@ class WallApp {
             if (this.dom && this.dom.addWallButton) this.dom.addWallButton.style.display = 'none';
             if (this.dom && this.dom.loginButton) this.dom.loginButton.style.display = 'none';
         }
+        // Re-render entries/series to reflect auth-only controls (e.g., pin buttons)
+        try {
+            if (Array.isArray(this.entries)) this.renderEntries();
+        } catch (_) {}
     }
 
     saveAuthState() {
@@ -1258,6 +1262,8 @@ class WallApp {
 
         // Capture pending entry id if present
         this._pendingEntryId = params.entry ? String(params.entry) : null;
+        this._pendingSeriesId = params.series ? String(params.series) : null;
+        this._pendingSeriesIndex = params.sindex ? parseInt(params.sindex, 10) : null;
 
         // Render cached entries instantly if present, otherwise show loader
         const cached = this.entriesCache[this.currentWall];
@@ -1271,7 +1277,11 @@ class WallApp {
         this.loadEntries();
 
         // Preload series info for any wall
-        this.loadSeries().catch(() => {});
+        this.loadSeries().then(() => {
+            if (this._pendingSeriesId) this.openPendingSeries();
+        }).catch(() => {
+            if (this._pendingSeriesId) this.openPendingSeries();
+        });
     }
 
     showHome() {
@@ -1854,8 +1864,8 @@ class WallApp {
         centerWrap.appendChild(toggle);
         card.appendChild(centerWrap);
 
-        // Pin button (local-only) — appended last to align right like entries
-        if (this.isAuthenticated) {
+        // Pin button — always visible; requires auth to toggle
+        {
             const pinBtn = document.createElement('button');
             pinBtn.type = 'button';
             pinBtn.className = 'pin-btn';
@@ -1869,6 +1879,7 @@ class WallApp {
             `;
             pinBtn.addEventListener('click', (e) => {
                 e.stopPropagation();
+                if (!this.isAuthenticated) { this.showPasswordForm(); return; }
                 this.toggleSeriesPin(series.id);
             });
             card.appendChild(pinBtn);
@@ -1929,10 +1940,19 @@ class WallApp {
             }
         };
 
+        // Only toggle on clicking the chevron button
         toggle.addEventListener('click', (e) => { e.stopPropagation(); toggleOpen(); });
-        card.addEventListener('click', () => {
+        // Double-click the card to open series modal
+        card.addEventListener('dblclick', (e) => {
+            e.preventDefault();
             if (Date.now() < (this._suppressClickUntil || 0)) return;
-            toggleOpen();
+            this.showSeriesModal(series, -1);
+        });
+        // Single click on card (not chevron/pin) also opens the series modal
+        card.addEventListener('click', (e) => {
+            if (e.target && e.target.closest && (e.target.closest('.series-toggle') || e.target.closest('.pin-btn'))) return;
+            if (Date.now() < (this._suppressClickUntil || 0)) return;
+            this.showSeriesModal(series, -1);
         });
 
         // Accept drops to add entries to series (auth only)
@@ -1988,6 +2008,198 @@ class WallApp {
         }
 
         return card;
+    }
+
+    async showSeriesModal(series, startIndex = 0) {
+        try {
+            const sid = String(series.id);
+            if (!this.seriesItemsCache.has(sid)) {
+                const resp = await fetch(`/api/series-items?series_id=${encodeURIComponent(sid)}`);
+                const result = await resp.json().catch(() => ({}));
+                const data = resp.ok ? (result.data || []) : [];
+                this.seriesItemsCache.set(sid, data);
+            }
+            const items = this.seriesItemsCache.get(sid) || [];
+            const type = (series && series.home_wall) ? String(series.home_wall) : this.currentWall;
+            if (!items.length) {
+                const wrap = document.createElement('div');
+                wrap.className = 'entry-form';
+                wrap.innerHTML = `<h3>${this.escapeHtml(series.title || 'Series')}</h3><div class="series-empty">No notes in this series yet.</div>`;
+                this.dom.modalBody.innerHTML = '';
+                this.dom.modalBody.appendChild(wrap);
+                this._modalContext = 'series-view';
+                this._activeSeries = { id: sid, idx: 0 };
+                this.openModal();
+                return;
+            }
+
+            // Use -1 to represent the title-only page
+            const state = { pos: (typeof startIndex === 'number' ? startIndex : -1) };
+
+            const injectOverlay = () => {
+                // Remove previous overlay if any
+                const prev = document.getElementById('seriesNavOverlay');
+                if (prev) prev.remove();
+                const overlay = document.createElement('div');
+                overlay.id = 'seriesNavOverlay';
+                overlay.style.position = 'absolute';
+                overlay.style.inset = '0';
+                overlay.style.pointerEvents = 'none';
+                // Title centered at top only when viewing child entries (avoid duplicate on title-only page)
+                if (state.pos >= 0) {
+                    const title = document.createElement('div');
+                    title.textContent = String(series.title || 'Series');
+                    title.style.position = 'absolute';
+                    title.style.top = '8px';
+                    title.style.left = '50%';
+                    title.style.transform = 'translateX(-50%)';
+                    title.style.fontWeight = '700';
+                    title.style.pointerEvents = 'none';
+                    overlay.appendChild(title);
+                }
+                // Do not add overlay arrows; child modal uses bottom actions bar arrows
+                this.dom.modalBody.appendChild(overlay);
+            };
+
+            const renderTitleOnly = () => {
+                // Render a title-only landing with an index of child entries
+                const wrap = document.createElement('div');
+                wrap.className = 'entry-form series-title-modal';
+                const h = document.createElement('h3');
+                h.style.textAlign = 'center';
+                h.textContent = String(series.title || 'Series');
+                wrap.appendChild(h);
+
+                const indexBox = document.createElement('div');
+                indexBox.className = 'series-index';
+                const mkLabel = (en) => {
+                    const t = (en && en.title && String(en.title).trim()) ? String(en.title).trim() : '';
+                    if (t) return t;
+                    const raw = this.stripHtml(en && en.text ? String(en.text) : '');
+                    return raw.length > 64 ? raw.slice(0, 64) + '…' : raw || 'Untitled';
+                };
+                items.forEach((en, i) => {
+                    const row = document.createElement('div');
+                    row.className = 'series-index-row';
+                    const a = document.createElement('a');
+                    a.href = 'javascript:void(0)';
+                    a.textContent = mkLabel(en);
+                    a.addEventListener('click', (e) => { e.preventDefault(); openAt(i); });
+                    row.appendChild(a);
+                    indexBox.appendChild(row);
+                });
+                wrap.appendChild(indexBox);
+
+                this.dom.modalBody.innerHTML = '';
+                this.dom.modalBody.appendChild(wrap);
+                // Build actions bar with nav + share centered
+                const actions = document.createElement('div');
+                actions.className = 'modal-actions';
+                const left = document.createElement('div');
+                const center = document.createElement('div');
+                const right = document.createElement('div');
+                center.className = 'actions-center';
+                actions.appendChild(left); actions.appendChild(center); actions.appendChild(right);
+                // Share button identical to entry share
+                const shareBtn = document.createElement('button');
+                shareBtn.type = 'button'; shareBtn.className = 'icon-btn btn-liquid clear';
+                shareBtn.innerHTML = `
+                    <svg viewBox=\"0 0 24 24\" width=\"22\" height=\"22\" aria-hidden=\"true\">
+                      <path d=\"M12 13V6\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.6\" stroke-linecap=\"round\"/>
+                      <path d=\"M9 9l3-3 3 3\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.6\" stroke-linecap=\"round\" stroke-linejoin=\"round\"/>
+                      <rect x=\"5\" y=\"14\" width=\"14\" height=\"5\" rx=\"2.5\" ry=\"2.5\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.6\"/>
+                    </svg>`;
+                shareBtn.addEventListener('click', async () => {
+                    this.showShareLoading();
+                    try {
+                        const wall = String((type || this.currentWall) || 'rishu').toLowerCase();
+                        const base = location.origin || '';
+                        const longUrl = `${base}/#${encodeURIComponent(wall)}&series=${encodeURIComponent(sid)}`;
+                        const { shortUrl } = await this.createShortLink(null, null, longUrl);
+                        this.showShareModal(shortUrl || longUrl);
+                    } catch (_) { this.showShareModal(location.href); }
+                });
+                // Nav arrows placed around share in center
+                const leftBtn = document.createElement('button');
+                leftBtn.type = 'button'; leftBtn.className = 'btn-liquid clear'; leftBtn.textContent = '‹';
+                leftBtn.disabled = true; // no previous from title
+                const rightBtn = document.createElement('button');
+                rightBtn.type = 'button'; rightBtn.className = 'btn-liquid clear'; rightBtn.textContent = '›';
+                rightBtn.disabled = items.length === 0;
+                rightBtn.addEventListener('click', () => { if (items.length > 0) openAt(0); });
+                center.appendChild(leftBtn);
+                center.appendChild(shareBtn);
+                center.appendChild(rightBtn);
+                this.dom.modalBody.appendChild(actions);
+                this.openModal();
+                injectOverlay();
+            };
+
+            const openAt = (pos) => {
+                state.pos = pos;
+                if (state.pos < 0) {
+                    renderTitleOnly();
+                    return;
+                }
+                const en = items[state.pos];
+                this.showEntry(en);
+                injectOverlay();
+                // Enhance actions bar: replace share behavior and place nav arrows flanking share in center
+                const actions = this.dom.modalBody.querySelector('.modal-actions');
+                if (actions) {
+                    const center = actions.querySelector('.actions-center') || actions;
+                    // Replace share handler to share series+index
+                    let shareBtn = center.querySelector('button');
+                    if (shareBtn) {
+                        const clone = shareBtn.cloneNode(true);
+                        clone.onclick = null; clone.addEventListener('click', async (e) => {
+                            e.stopPropagation();
+                            this.showShareLoading();
+                            try {
+                                const wall = String((type || this.currentWall) || 'rishu').toLowerCase();
+                                const base = location.origin || '';
+                                const longUrl = `${base}/#${encodeURIComponent(wall)}&series=${encodeURIComponent(sid)}&sindex=${encodeURIComponent(state.pos)}`;
+                                const { shortUrl } = await this.createShortLink(null, null, longUrl);
+                                this.showShareModal(shortUrl || longUrl);
+                            } catch (_) { this.showShareModal(location.href); }
+                        });
+                        center.replaceChild(clone, shareBtn);
+                        shareBtn = clone;
+                    }
+                    // Remove any existing nav buttons in center to avoid duplicates
+                    center.querySelectorAll('.series-nav-left, .series-nav-right').forEach(el => el.remove());
+                    // Create left/right nav next to share (centered with gap)
+                    const mkNav = (cls, label, fn, disabled) => {
+                        const b = document.createElement('button');
+                        b.type = 'button'; b.className = `btn-liquid clear ${cls}`; b.textContent = label;
+                        if (disabled) b.disabled = true;
+                        b.addEventListener('click', (e) => { e.stopPropagation(); fn(); });
+                        return b;
+                    };
+                    const leftBtn = mkNav('series-nav-left', '‹', () => openAt(state.pos - 1), false);
+                    const rightBtn = mkNav('series-nav-right', '›', () => openAt(state.pos + 1), state.pos >= items.length - 1);
+                    // From first child, left goes to title; allow it
+                    if (state.pos <= -1) leftBtn.disabled = true;
+                    // Insert flanking share
+                    center.insertBefore(leftBtn, shareBtn);
+                    if (shareBtn.nextSibling) center.insertBefore(rightBtn, shareBtn.nextSibling); else center.appendChild(rightBtn);
+                }
+            };
+
+            openAt(state.pos);
+            this._modalContext = 'series-view';
+            this._activeSeries = { id: sid };
+        } catch (err) {
+            // Fallback minimal modal so clicks always surface something
+            const wrap = document.createElement('div');
+            wrap.className = 'entry-form';
+            wrap.innerHTML = `<h3>${this.escapeHtml(series && series.title || 'Series')}</h3><div class="error">Failed to load series items.</div>`;
+            this.dom.modalBody.innerHTML = '';
+            this.dom.modalBody.appendChild(wrap);
+            this._modalContext = 'series-view';
+            this.openModal();
+            try { console.error('showSeriesModal error', err); } catch(_){}
+        }
     }
 
     enableSeriesItemsDnD(container, seriesId) {
@@ -2801,8 +3013,9 @@ class WallApp {
         content.className = 'full-entry';
         content.innerHTML = this.linkify(text);
 
-        // Songs modal: show Spotify embed only (no extra art/title)
-        if (this.currentWall === 'songs' && entry && entry.spotify_url) {
+        // Songs modal: show Spotify embed (also when entry carries _type: 'songs')
+        const viewWall = (entry && entry._type) ? String(entry._type) : this.currentWall;
+        if (viewWall === 'songs' && entry && entry.spotify_url) {
             const embedWrap = document.createElement('div');
             embedWrap.className = 'spotify-embed';
             container.appendChild(embedWrap);
@@ -2840,7 +3053,7 @@ class WallApp {
             }
 
             // Edit (auth only) for known editable walls
-            if (this.isAuthenticated && (this.currentWall === 'rishu' || this.currentWall === 'tech' || this.currentWall === 'songs' || this.currentWall === 'ideas')) {
+            if (this.isAuthenticated && (viewWall === 'rishu' || viewWall === 'tech' || viewWall === 'songs' || viewWall === 'ideas')) {
                 const editBtn = document.createElement('button');
                 editBtn.type = 'button';
                 editBtn.className = 'action-edit-btn btn-liquid clear';
@@ -2851,9 +3064,9 @@ class WallApp {
                     </svg>
                     Edit`;
                 editBtn.addEventListener('click', () => {
-                    if (this.currentWall === 'tech') this.showTechEditForm(entry);
-                    else if (this.currentWall === 'songs') this.showSongsEditForm(entry);
-                    else if (this.currentWall === 'ideas') this.showIdeasEditForm(entry);
+                    if (viewWall === 'tech') this.showTechEditForm(entry);
+                    else if (viewWall === 'songs') this.showSongsEditForm(entry);
+                    else if (viewWall === 'ideas') this.showIdeasEditForm(entry);
                     else this.showEditForm(entry);
                 });
                 right.appendChild(editBtn);
@@ -2875,7 +3088,7 @@ class WallApp {
                 shareBtn.addEventListener('click', async () => {
                     this.showShareLoading();
                     try {
-                        const wall = String(this.currentWall || '').toLowerCase();
+                        const wall = String(viewWall || '').toLowerCase();
                         if (wall === 'rishu' || wall === 'friend') {
                             const { shortUrl } = await this.createShortLink(entry.id, wall === 'friend' ? 'friend' : 'rishu');
                             this.showShareModal(shortUrl);
@@ -2925,7 +3138,7 @@ class WallApp {
                 confirmBtn.addEventListener('click', async () => {
                     confirmBtn.disabled = true;
                     try {
-                        if (this.currentWall === 'friend') {
+                        if (viewWall === 'friend') {
                             await this.removeFriendEntry(entry.id);
                             // Optimistic local removal
                             if (Array.isArray(this.entriesCache.friend)) {
@@ -2935,7 +3148,7 @@ class WallApp {
                                     this.renderEntries();
                                 }
                             }
-                        } else if (this.currentWall === 'tech') {
+                        } else if (viewWall === 'tech') {
                             await this.removeTechNote(entry.id);
                             if (Array.isArray(this.entriesCache.tech)) {
                                 this.entriesCache.tech = this.entriesCache.tech.filter(e => e.id !== entry.id);
@@ -2944,7 +3157,7 @@ class WallApp {
                                     this.renderEntries();
                                 }
                             }
-                        } else if (this.currentWall === 'songs') {
+                        } else if (viewWall === 'songs') {
                             await this.removeSongQuote(entry.id);
                             if (Array.isArray(this.entriesCache.songs)) {
                                 this.entriesCache.songs = this.entriesCache.songs.filter(e => e.id !== entry.id);
@@ -2953,7 +3166,7 @@ class WallApp {
                                     this.renderEntries();
                                 }
                             }
-                        } else if (this.currentWall === 'ideas') {
+                        } else if (viewWall === 'ideas') {
                             await this.removeProjectIdea(entry.id);
                             if (Array.isArray(this.entriesCache.ideas)) {
                                 this.entriesCache.ideas = this.entriesCache.ideas.filter(e => e.id !== entry.id);
@@ -4268,6 +4481,16 @@ class WallApp {
         } else {
             this.showEntry(entry);
         }
+    }
+
+    openPendingSeries() {
+        const sid = this._pendingSeriesId;
+        if (!sid) return;
+        const s = (this.series || []).find(x => String(x.id) === String(sid));
+        if (!s) return; // series list not available
+        const idx = (typeof this._pendingSeriesIndex === 'number' && !Number.isNaN(this._pendingSeriesIndex)) ? this._pendingSeriesIndex : -1;
+        this._pendingSeriesId = null; this._pendingSeriesIndex = null;
+        this.showSeriesModal(s, idx);
     }
 
     createTransparentDragImage() {
