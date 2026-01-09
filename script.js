@@ -1732,7 +1732,10 @@ class WallApp {
         const hasSeries = Array.isArray(this.series) && this.series.length > 0;
         const hasEntries = entries.length > 0;
 
-        const allowSeries = this.currentWall !== 'drafts';
+        // Only show series on a wall's main view, not special sub-views like video/dream.
+        // For rishu, restrict to the base wall (selectedWall slug 'rishu' or no selection).
+        const isRishuMain = (this.currentWall === 'rishu') && (!this.selectedWall || String(this.selectedWall.slug || '').toLowerCase() === 'rishu');
+        const allowSeries = (this.currentWall !== 'drafts') && (this.currentWall !== 'rishu' ? true : isRishuMain);
 
         if (!hasEntries && !hasSeries) {
             this.showEmptyState();
