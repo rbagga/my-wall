@@ -89,6 +89,7 @@ async function entriesHandler(req, res, parts) {
     try {
       // Optional wall scoping
       const url = new URL(req.url, 'http://local');
+      const entryId = url.searchParams.get('id') || url.searchParams.get('entry_id');
       const wallId = url.searchParams.get('wall_id');
       const wallSlug = url.searchParams.get('wall');
       const pwd = url.searchParams.get('password');
@@ -111,6 +112,23 @@ async function entriesHandler(req, res, parts) {
             }
           }
         } catch (_) {}
+      }
+
+      // If requesting a specific entry by id, return just that row (respect wall password if private)
+      if (entryId) {
+        const row = await supabase.from('wall_entries').select('*').eq('id', entryId).maybeSingle();
+        if (row.error) throw row.error;
+        if (!row.data) return res.status(404).json({ error: 'Not found' });
+        const wid = row.data.wall_id;
+        if (wid) {
+          try {
+            const wr = await supabase.from('walls').select('is_public').eq('id', wid).maybeSingle();
+            if (wr && wr.data && wr.data.is_public === false) {
+              if (pwd !== process.env.WALL_PASSWORD) return res.status(401).json({ error: 'Unauthorized' });
+            }
+          } catch (_) {}
+        }
+        return res.status(200).json({ data: [row.data] });
       }
 
       // Build query dynamically to include wall filter when possible

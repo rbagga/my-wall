@@ -4504,13 +4504,58 @@ class WallApp {
                 if (found) { entry = found; break; }
             }
         }
-        if (!entry) return; // keep _pendingEntryId to retry after prefetch
+        if (!entry) {
+            // Fallback: fetch specific entry by id (handles private walls with password)
+            this.fetchEntryById(id).then(async (en) => {
+                if (!en) return;
+                this._pendingEntryId = null;
+                // If entry belongs to a specific wall, select it for rishu view
+                if (this.currentWall === 'rishu' && en.wall_id) {
+                    try {
+                        await this.fetchWalls();
+                        const w = (this.walls || []).find(x => String(x.id) === String(en.wall_id));
+                        if (w) {
+                            this.selectedWall = { id: w.id, slug: w.slug, name: w.name, is_public: !!w.is_public };
+                            this.saveSelectedWallState();
+                            this.updateWallTitle();
+                            // Reload entries for that wall in background
+                            this.entriesCache.rishu = null;
+                            this.loadEntries();
+                        }
+                    } catch (_) {}
+                }
+                this.showEntry(en);
+            }).catch(() => {});
+            return; // keep pending id until resolved
+        }
         this._pendingEntryId = null;
         if (this.currentWall === 'drafts' && this.isAuthenticated) {
             this.showEditForm(entry);
         } else {
             this.showEntry(entry);
         }
+    }
+
+    async fetchEntryById(id) {
+        // Try with current password; on 401 prompt and retry once
+        const tryFetch = async () => {
+            const url = new URL('/api/entries', location.origin);
+            url.searchParams.set('id', String(id));
+            if (this.tempPassword) url.searchParams.set('password', this.tempPassword);
+            const resp = await fetch(url.toString());
+            if (resp.status === 401) return { unauthorized: true };
+            const result = await resp.json().catch(() => ({}));
+            if (!resp.ok) throw new Error(result.error || 'Failed');
+            const arr = Array.isArray(result.data) ? result.data : [];
+            return { entry: arr[0] || null };
+        };
+        let r = await tryFetch();
+        if (r.unauthorized) {
+            await this.promptForPassword().catch(() => {});
+            if (!this.isAuthenticated) return null;
+            r = await tryFetch();
+        }
+        return r.entry || null;
     }
 
     openPendingSeries() {
