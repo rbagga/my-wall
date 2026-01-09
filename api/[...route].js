@@ -124,7 +124,16 @@ async function entriesHandler(req, res, parts) {
           try {
             const wr = await supabase.from('walls').select('is_public').eq('id', wid).maybeSingle();
             if (wr && wr.data && wr.data.is_public === false) {
-              if (pwd !== process.env.WALL_PASSWORD) return res.status(401).json({ error: 'Unauthorized' });
+              // Allow access if password OK OR a valid short-link code for this entry is provided
+              const code = url.searchParams.get('code');
+              let authorized = (pwd === process.env.WALL_PASSWORD);
+              if (!authorized && code) {
+                try {
+                  const c = await supabase.from('short_links').select('entry_id').eq('code', code).maybeSingle();
+                  if (c && c.data && String(c.data.entry_id) === String(entryId)) authorized = true;
+                } catch (_) {}
+              }
+              if (!authorized) return res.status(401).json({ error: 'Unauthorized' });
             }
           } catch (_) {}
         }
@@ -1237,7 +1246,9 @@ async function sResolveHandler(req, res) {
 
     const proto = req.headers['x-forwarded-proto'] || 'https';
     const host = req.headers.host;
-    const viewHash = isFriend ? `#friends&entry=${encodeURIComponent(friendId)}` : `#entry=${encodeURIComponent(entryId)}`;
+    const viewHash = isFriend
+      ? `#friends&entry=${encodeURIComponent(friendId)}&code=${encodeURIComponent(code)}`
+      : `#entry=${encodeURIComponent(entryId)}&code=${encodeURIComponent(code)}`;
     const viewUrl = `${proto}://${host}/${viewHash}`;
 
     if (!isBot(req)) {

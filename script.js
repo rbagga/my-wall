@@ -4541,6 +4541,11 @@ class WallApp {
         const tryFetch = async () => {
             const url = new URL('/api/entries', location.origin);
             url.searchParams.set('id', String(id));
+            // Include short-link code if present in hash
+            try {
+                const params = this.parseHashParams();
+                if (params.code) url.searchParams.set('code', params.code);
+            } catch (_) {}
             if (this.tempPassword) url.searchParams.set('password', this.tempPassword);
             const resp = await fetch(url.toString());
             if (resp.status === 401) return { unauthorized: true };
