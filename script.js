@@ -2585,6 +2585,19 @@ class WallApp {
                 const s = await this.createSeries(name);
                 this.series = [s, ...(this.series || [])];
                 await this.addToSeries(s.id, entry.id, this.currentWall);
+                // Update series items cache locally to immediately hide standalone and show under series
+                const sid = String(s.id);
+                const curItems = this.seriesItemsCache.get(sid) || [];
+                const newItem = { ...entry, _type: this.currentWall };
+                this.seriesItemsCache.set(sid, [...curItems, newItem]);
+                // Remove from the main list immediately
+                const key = (['friend','tech','songs','ideas','drafts'].includes(this.currentWall)) ? this.currentWall : 'rishu';
+                if (Array.isArray(this.entriesCache[key])) {
+                    this.entriesCache[key] = this.entriesCache[key].filter(e => String(e.id) !== String(entry.id));
+                    if (this.currentWall === key || (key === 'rishu' && this.currentWall === 'rishu')) {
+                        this.entries = this.entriesCache[key];
+                    }
+                }
                 // show the new series card immediately on any wall
                 this.renderEntries();
             } catch (e) {
