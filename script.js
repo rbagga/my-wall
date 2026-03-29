@@ -5029,9 +5029,9 @@ class WallApp {
 
     applyDarkMode() {
         const stored = localStorage.getItem(CONFIG.STORAGE_KEYS.DARK_MODE);
-        const isDark = stored === null ? true : stored === 'true';
+        const isDark = stored === null ? false : stored === 'true';
         if (stored === null) {
-            localStorage.setItem(CONFIG.STORAGE_KEYS.DARK_MODE, 'true');
+            localStorage.setItem(CONFIG.STORAGE_KEYS.DARK_MODE, 'false');
         }
         this.dom.darkModeToggle.checked = isDark;
         document.documentElement.classList.toggle('dark-mode', isDark);
