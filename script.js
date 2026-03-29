@@ -269,7 +269,10 @@ class WallApp {
         this.dom.wallTitle = document.getElementById('wallTitle');
         this.dom.homeButton = document.getElementById('homeButton');
         this.dom.homeView = document.getElementById('homeView');
-        this.dom.bubbles = document.getElementById('bubbles');
+        this.dom.homeList = document.getElementById('homeList');
+        this.dom.homeLoginButton = document.getElementById('homeLoginButton');
+        this.dom.homeThemeButton = document.getElementById('homeThemeButton');
+        this.dom.homeAddWallButton = document.getElementById('homeAddWallButton');
         this.dom.loginButton = document.getElementById('loginButton');
         this.dom.header = document.querySelector('.header');
         this.dom.draftsButton = document.getElementById('draftsButton');
@@ -371,8 +374,14 @@ class WallApp {
             // Only on home
             this.dom.addWallButton.style.display = (this.isHome && this.isAuthenticated) ? 'inline-block' : 'none';
         }
+        if (this.dom && this.dom.homeAddWallButton) {
+            this.dom.homeAddWallButton.style.display = (this.isHome && this.isAuthenticated) ? 'inline-block' : 'none';
+        }
         if (this.dom && this.dom.loginButton) {
             this.dom.loginButton.textContent = this.isAuthenticated ? 'logout' : 'login';
+        }
+        if (this.dom && this.dom.homeLoginButton) {
+            this.dom.homeLoginButton.textContent = this.isAuthenticated ? 'logout' : 'login';
         }
         // Hide switching controls on wall views
         if (!this.isHome) {
@@ -385,6 +394,7 @@ class WallApp {
             if (this.dom && this.dom.addWallButton) this.dom.addWallButton.style.display = 'none';
             if (this.dom && this.dom.loginButton) this.dom.loginButton.style.display = 'none';
         }
+        if (this.isHome) this.renderHomeList();
         // Re-render entries/series to reflect auth-only controls (e.g., pin buttons)
         try {
             if (Array.isArray(this.entries)) this.renderEntries();
@@ -568,6 +578,18 @@ class WallApp {
         }
         if (this.dom.loginButton) {
             this.dom.loginButton.addEventListener('click', () => this.handleLoginClick());
+        }
+        if (this.dom.homeLoginButton) {
+            this.dom.homeLoginButton.addEventListener('click', () => this.handleLoginClick());
+        }
+        if (this.dom.homeThemeButton) {
+            this.dom.homeThemeButton.addEventListener('click', () => {
+                this.dom.darkModeToggle.checked = !this.dom.darkModeToggle.checked;
+                this.toggleDarkMode();
+            });
+        }
+        if (this.dom.homeAddWallButton) {
+            this.dom.homeAddWallButton.addEventListener('click', () => this.handleAddWallClick());
         }
 
         // Drafts button (shown only when authenticated)
@@ -763,9 +785,7 @@ class WallApp {
                     this.renderWallButtons();
                     this.closeModal();
                     if (this.isHome) {
-                        // Stay on home and refresh bubbles only
-                        this.renderBubbles();
-                        this.renderUtilityBubbles();
+                        this.renderHomeList();
                     } else {
                         // On wall views, refresh rishu entries if applicable
                         this.updateWallTitle();
@@ -793,7 +813,6 @@ class WallApp {
             this.tempPassword = null;
             this.saveAuthState();
             this.updateAuthUI();
-            // Refresh bubbles visibility (add wall button)
             if (this.isHome) this.showHome();
             return;
         }
@@ -1300,19 +1319,15 @@ class WallApp {
         // Hide entire header on home
         if (this.dom.header) this.dom.header.style.display = 'none';
         if (!this.walls || !this.walls.length) {
-            this.fetchWalls().then(() => { this.renderBubbles(); this.renderUtilityBubbles(); }).catch(() => { this.renderBubbles(); this.renderUtilityBubbles(); });
+            this.fetchWalls().then(() => this.renderHomeList()).catch(() => this.renderHomeList());
         } else {
-            this.renderBubbles();
-            this.renderUtilityBubbles();
+            this.renderHomeList();
         }
-        // Static visuals on home: skip dynamic lighting to avoid visual shifts
     }
 
     hideHome() {
         if (!this.isHome) return;
         this.isHome = false;
-        this.stopBubblesPhysics();
-        this.stopBubbleLighting();
         try { document.body.style.overflow = ''; } catch(_){}
         if (this.dom.homeView) {
             this.dom.homeView.classList.remove('show');
@@ -1322,7 +1337,7 @@ class WallApp {
             }
             setTimeout(() => { if (!this.isHome) this.dom.homeView.style.display = 'none'; }, 300);
         }
-        if (this.dom.bubbles) this.dom.bubbles.innerHTML = '';
+        if (this.dom.homeList) this.dom.homeList.innerHTML = '';
         // Restore header
         if (this.dom.header) this.dom.header.style.display = '';
         // Only show allowed controls: add entry, home, theme
@@ -1341,6 +1356,80 @@ class WallApp {
         // Show title again for wall
         if (this.dom.wallTitle) this.dom.wallTitle.style.display = '';
         this.updateWallTitle();
+    }
+
+    renderHomeList() {
+        if (!this.dom.homeList) return;
+        const root = this.dom.homeList;
+        root.innerHTML = '';
+
+        const wallsRaw = Array.isArray(this.walls) ? this.walls.slice() : [];
+        const walls = wallsRaw.filter(w => (this.isAuthenticated ? true : !!w.is_public));
+        const virtuals = this.getVirtualWalls().filter(v => {
+            if (v.slug === 'ideas' || v.slug === 'drafts') return this.isAuthenticated;
+            return true;
+        });
+        const merged = [...walls, ...virtuals];
+        const seen = new Set();
+        const items = merged.filter((wall) => {
+            const key = wall._virtual ? `virtual:${wall.slug}` : `db:${wall.id}`;
+            if (seen.has(key)) return false;
+            seen.add(key);
+            return true;
+        }).sort((a, b) => {
+            const rank = (wall) => {
+                const slug = String(wall.slug || '').toLowerCase();
+                if (slug === 'rishu') return 0;
+                if (wall._virtual && slug === 'friend') return 1;
+                if (wall._virtual && slug === 'tech') return 2;
+                if (wall._virtual && slug === 'songs') return 3;
+                if (wall._virtual && slug === 'ideas') return 4;
+                if (wall._virtual && slug === 'drafts') return 5;
+                return 10;
+            };
+            const rankDiff = rank(a) - rank(b);
+            if (rankDiff !== 0) return rankDiff;
+            return String(a.name || a.slug || '').localeCompare(String(b.name || b.slug || ''));
+        });
+
+        if (!items.length) {
+            root.innerHTML = '<p class="home-list-empty">No walls yet.</p>';
+            return;
+        }
+
+        items.forEach((wall) => {
+            const button = document.createElement('button');
+            button.type = 'button';
+            button.className = 'home-wall-link';
+            const slugLower = String((wall.slug || '')).toLowerCase();
+            let label = slugLower === 'rishu' ? "rishu's wall" : (wall.name || 'wall');
+            if (wall._virtual && wall.slug === 'friend') label = "friends' wall";
+            if (wall._virtual && wall.slug === 'tech') label = 'random tech notes';
+            if (wall._virtual && wall.slug === 'songs') label = 'song quotes';
+            if (wall._virtual && wall.slug === 'ideas') label = 'project ideas';
+            if (wall._virtual && wall.slug === 'drafts') label = 'drafts';
+            button.textContent = label;
+            button.addEventListener('click', () => {
+                if (wall._virtual) {
+                    if (wall.slug === 'rishu') location.hash = '#rishu';
+                    else if (wall.slug === 'friend') location.hash = '#friend';
+                    else if (wall.slug === 'tech') location.hash = '#tech';
+                    else if (wall.slug === 'songs') location.hash = '#songs';
+                    else if (wall.slug === 'ideas') location.hash = '#ideas';
+                    else if (wall.slug === 'drafts') location.hash = '#drafts';
+                    else location.hash = '#';
+                    return;
+                }
+                if (!wall.is_public && !this.isAuthenticated) {
+                    this.showPasswordForm();
+                    return;
+                }
+                this.selectedWall = { id: wall.id, slug: wall.slug, name: wall.name, is_public: !!wall.is_public };
+                this.saveSelectedWallState();
+                location.hash = '#rishu';
+            });
+            root.appendChild(button);
+        });
     }
 
     renderBubbles() {
@@ -1434,259 +1523,15 @@ class WallApp {
     }
 
     getVirtualWalls() {
-        // Always include the non-DB special views as bubbles
         const v = [];
-        // Add a virtual rishu bubble if DB hasn't returned one
         const hasRishu = Array.isArray(this.walls) && this.walls.some(w => String((w.slug||'')).toLowerCase() === 'rishu');
         if (!hasRishu) v.push({ _virtual: true, slug: 'rishu', name: "rishu's wall" });
         v.push({ _virtual: true, slug: 'friend', name: "friends' wall" });
         v.push({ _virtual: true, slug: 'tech', name: 'tech notes' });
         v.push({ _virtual: true, slug: 'songs', name: 'song quotes' });
         v.push({ _virtual: true, slug: 'ideas', name: 'project ideas' });
-        // Drafts is auth-only; include here and filter based on isAuthenticated in renderBubbles
         v.push({ _virtual: true, slug: 'drafts', name: 'drafts' });
         return v;
-    }
-
-    initBubblesPhysics() {
-        // Stop any existing loop
-        this.stopBubblesPhysics();
-        if (!this.dom.bubbles) return;
-        const nodes = [];
-        const vw = window.innerWidth;
-        const vh = window.innerHeight;
-        const cx = vw / 2;
-        const cy = vh / 2 + 10; // bias down slightly
-        const els = Array.from(this.dom.bubbles.querySelectorAll('.bubble'))
-            .filter(el => !el.classList.contains('util'));
-        // Determine anchors around a ring for non-center bubbles (static radius)
-        const ringBase = (vw <= 480 ? 0.30 : (vw <= 768 ? 0.26 : 0.22));
-        const ringR = Math.min(vw, vh) * ringBase;
-        let anchorIndex = 0;
-        els.forEach((el) => {
-            // Allow CSS animations; physics controls left/top
-            const rect = el.getBoundingClientRect();
-            const r = (rect.width || (el.classList.contains('center') ? 160 : 120)) / 2;
-            const isCenter = el.classList.contains('center');
-            let anchorX = cx, anchorY = cy, angle = 0;
-            if (!isCenter) {
-                const t = anchorIndex / Math.max(1, (els.length - 1));
-                angle = t * Math.PI * 2;
-                anchorX = cx + ringR * Math.cos(angle);
-                anchorY = cy + ringR * Math.sin(angle);
-                anchorIndex++;
-            }
-            // Initial position: near anchor with tiny random offset
-            const x = anchorX + (Math.random() - 0.5) * 12;
-            const y = anchorY + (Math.random() - 0.5) * 12;
-            const vx = (Math.random() - 0.5) * 0.15;
-            const vy = (Math.random() - 0.5) * 0.15;
-            nodes.push({ el, x, y, vx, vy, r, m: r * r, fixed: isCenter, anchorX, anchorY, angle });
-        });
-        this._bubbleSim = { nodes, raf: null, last: performance.now() };
-        const onResize = () => { if (this.isHome) this.resetBubblesPositions(); };
-        window.addEventListener('resize', onResize);
-        this._bubbleSim.onResize = onResize;
-        const step = (t) => {
-            if (!this._bubbleSim) return;
-            this.stepBubblesPhysics(t);
-            this._bubbleSim.raf = requestAnimationFrame(step);
-        };
-        this._bubbleSim.raf = requestAnimationFrame(step);
-    }
-
-    stopBubblesPhysics() {
-        if (this._bubbleSim && this._bubbleSim.raf) cancelAnimationFrame(this._bubbleSim.raf);
-        if (this._bubbleSim && this._bubbleSim.onResize) window.removeEventListener('resize', this._bubbleSim.onResize);
-        this._bubbleSim = null;
-    }
-
-    resetBubblesPositions() {
-        if (!this._bubbleSim) return;
-        const vw = window.innerWidth; const vh = window.innerHeight;
-        const cx = vw/2; const cy = vh/2 + 10;
-        const nonCenter = this._bubbleSim.nodes.filter(n => !n.fixed);
-        const ringBase = (vw <= 480 ? 0.30 : (vw <= 768 ? 0.26 : 0.22));
-        const ringR = Math.min(vw, vh) * ringBase;
-        // Recompute anchors
-        nonCenter.forEach((n, i) => {
-            const t = i / Math.max(1, (nonCenter.length));
-            const angle = t * Math.PI * 2;
-            n.anchorX = cx + ringR * Math.cos(angle);
-            n.anchorY = cy + ringR * Math.sin(angle);
-        });
-        this._bubbleSim.nodes.forEach(n => {
-            if (n.fixed) {
-                n.x = cx; n.y = cy; n.vx = 0; n.vy = 0; return;
-            }
-            n.x = n.anchorX + (Math.random()-0.5)*12;
-            n.y = n.anchorY + (Math.random()-0.5)*12;
-            n.vx = (Math.random()-0.5)*0.15; n.vy = (Math.random()-0.5)*0.15;
-        });
-    }
-
-    stepBubblesPhysics(time) {
-        const sim = this._bubbleSim; if (!sim) return;
-        const dt = Math.min(0.04, (time - (sim.last || time)) / 1000) || 0.016;
-        sim.last = time;
-        const nodes = sim.nodes;
-        const vw = window.innerWidth; const vh = window.innerHeight;
-        const cx = vw/2; const cy = vh/2 + 10;
-        const anchorStrength = 2.0; // attraction to anchor
-        const centerStrength = 0.1; // light global cohesion
-        const friction = 0.93;
-        const jitter = 0.01; // smaller jiggle
-
-        // Attraction to per-node anchor (keeps relative positions), movement
-        for (let i = 0; i < nodes.length; i++) {
-            const n = nodes[i];
-            if (n.fixed) { n.x = cx; n.y = cy; n.vx = 0; n.vy = 0; continue; }
-            const dxA = (n.anchorX) - n.x; const dyA = (n.anchorY) - n.y;
-            n.vx += dxA * anchorStrength * dt;
-            n.vy += dyA * anchorStrength * dt;
-            // mild global cohesion to center
-            const dxC = cx - n.x; const dyC = cy - n.y;
-            n.vx += dxC * centerStrength * dt;
-            n.vy += dyC * centerStrength * dt;
-            // tiny jitter
-            n.vx += (Math.random() - 0.5) * jitter;
-            n.vy += (Math.random() - 0.5) * jitter;
-            // integrate
-            n.vx *= friction; n.vy *= friction;
-            n.x += n.vx; n.y += n.vy;
-        }
-        // Collision resolution (simple repulsion)
-        for (let i = 0; i < nodes.length; i++) {
-            for (let j = i+1; j < nodes.length; j++) {
-                const a = nodes[i], b = nodes[j];
-                if (a.fixed && b.fixed) continue;
-                const dx = b.x - a.x; const dy = b.y - a.y;
-                const distSq = dx*dx + dy*dy;
-                const minDist = a.r + b.r - 4; // slight overlap tolerance
-                if (distSq > 0) {
-                    const dist = Math.sqrt(distSq);
-                    if (dist < minDist) {
-                        const overlap = (minDist - dist) * 0.5;
-                        const nx = dx / dist; const ny = dy / dist;
-                        // separate
-                        if (!a.fixed) { a.x -= nx * overlap; a.y -= ny * overlap; }
-                        if (!b.fixed) { b.x += nx * overlap; b.y += ny * overlap; }
-                        // simple velocity exchange along normal
-                        const av = a.vx*nx + a.vy*ny;
-                        const bv = b.vx*nx + b.vy*ny;
-                        const swap = bv - av;
-                        if (!a.fixed) { a.vx += nx * swap; a.vy += ny * swap; }
-                        if (!b.fixed) { b.vx -= nx * swap; b.vy -= ny * swap; }
-                    }
-                }
-            }
-        }
-        // Write positions
-        for (let i = 0; i < nodes.length; i++) {
-            const n = nodes[i];
-            n.el.style.left = (n.x - n.r) + 'px';
-            n.el.style.top = (n.y - n.r) + 'px';
-        }
-    }
-
-    renderUtilityBubbles() {
-        if (!this.dom.bubbles) return;
-        // Remove any previous utility bubbles
-        const prev = this.dom.bubbles.querySelectorAll('.bubble.util');
-        prev.forEach(n => n.remove());
-        const vw = window.innerWidth; const top = 20;
-        // Add wall (top-left) — only if authenticated
-        if (this.isAuthenticated) {
-            const add = document.createElement('div');
-            add.className = 'bubble small util';
-            add.style.left = '20px';
-            add.style.top = `${top}px`;
-            add.innerHTML = '<span>add wall</span>';
-            add.addEventListener('click', () => this.showCreateWallModal());
-            this.dom.bubbles.appendChild(add);
-        }
-        // Login / Logout (top middle)
-        const auth = document.createElement('div');
-        auth.className = 'bubble small util';
-        auth.style.left = `${Math.max(20, vw/2 - 45)}px`;
-        auth.style.top = `${top}px`;
-        auth.innerHTML = `<span>${this.isAuthenticated ? 'logout' : 'login'}</span>`;
-        auth.addEventListener('click', () => this.handleLoginClick());
-        this.dom.bubbles.appendChild(auth);
-        // Theme toggle (top right)
-        const theme = document.createElement('div');
-        theme.className = 'bubble small util';
-        theme.style.left = `${Math.max(20, vw - 110)}px`;
-        theme.style.top = `${top}px`;
-        theme.innerHTML = '<span>theme</span>';
-        theme.addEventListener('click', () => {
-            this.dom.darkModeToggle.checked = !this.dom.darkModeToggle.checked;
-            this.toggleDarkMode();
-        });
-        this.dom.bubbles.appendChild(theme);
-    }
-
-    // Subtle dynamic lighting based on pointer and slow drift
-    initBubbleLighting() {
-        this.stopBubbleLighting();
-        const state = { mx: 0.5, my: 0.5, lastMove: performance.now(), raf: null };
-        const root = this.dom.bubbles;
-        if (!root) return;
-        const isTouch = ('ontouchstart' in window) || (navigator.maxTouchPoints > 0);
-        if (isTouch) { this._bubbleLight = null; return; }
-        const apply = () => {
-            const els = Array.from(root.querySelectorAll('.bubble')).filter(el => !el.classList.contains('util'));
-            const angle = Math.atan2(state.my - 0.5, state.mx - 0.5) * 180 / Math.PI;
-            els.forEach((el, idx) => {
-                // vary per bubble a touch
-                const k = 0.06 + (idx % 5) * 0.004;
-                const offX = (state.mx - 0.5) * 10 * k; // percent
-                const offY = (state.my - 0.5) * 10 * k;
-                const hl1l = parseFloat((el.style.getPropertyValue('--hl1l') || '20%')); // may be set with %
-                const hl1t = parseFloat((el.style.getPropertyValue('--hl1t') || '16%'));
-                const hl2r = parseFloat((el.style.getPropertyValue('--hl2r') || '16%'));
-                const hl2b = parseFloat((el.style.getPropertyValue('--hl2b') || '18%'));
-                // update highlights relative to pointer
-                el.style.setProperty('--hl1l', `${Math.max(10, Math.min(30, hl1l + offX))}%`);
-                el.style.setProperty('--hl1t', `${Math.max(10, Math.min(30, hl1t + offY))}%`);
-                el.style.setProperty('--hl2r', `${Math.max(10, Math.min(30, hl2r - offX))}%`);
-                el.style.setProperty('--hl2b', `${Math.max(10, Math.min(30, hl2b - offY))}%`);
-                el.style.setProperty('--envAngle', `${25 + angle * 0.15}deg`);
-            });
-        };
-        const onMove = (e) => {
-            const x = (e.touches && e.touches.length) ? e.touches[0].clientX : e.clientX;
-            const y = (e.touches && e.touches.length) ? e.touches[0].clientY : e.clientY;
-            state.mx = Math.max(0, Math.min(1, x / window.innerWidth));
-            state.my = Math.max(0, Math.min(1, y / window.innerHeight));
-            state.lastMove = performance.now();
-            apply();
-        };
-        window.addEventListener('mousemove', onMove);
-        // gentle drift when idle
-        const drift = (t) => {
-            const now = performance.now();
-            if (now - state.lastMove > 1500) {
-                const t2 = now * 0.00015;
-                state.mx = 0.5 + Math.cos(t2) * 0.05;
-                state.my = 0.5 + Math.sin(t2 * 1.2) * 0.05;
-                apply();
-            }
-            state.raf = requestAnimationFrame(drift);
-        };
-        state.raf = requestAnimationFrame(drift);
-        this._bubbleLight = { state, onMove };
-        // initial
-        apply();
-    }
-
-    stopBubbleLighting() {
-        if (this._bubbleLight) {
-            window.removeEventListener('mousemove', this._bubbleLight.onMove);
-            window.removeEventListener('touchmove', this._bubbleLight.onMove);
-            if (this._bubbleLight.state.raf) cancelAnimationFrame(this._bubbleLight.state.raf);
-        }
-        this._bubbleLight = null;
     }
 
     handleAddButtonClick() {
@@ -1724,7 +1569,7 @@ class WallApp {
     }
 
     renderEntries() {
-        // Do not render entries when on the home bubbles view
+        // Do not render entries when on the home view
         if (this.isHome) return;
         this.dom.wall.innerHTML = '';
         // Sort: pinned first by pin_order asc, then others by timestamp desc
@@ -5176,6 +5021,7 @@ class WallApp {
 
     toggleDarkMode() {
         const isDark = this.dom.darkModeToggle.checked;
+        document.documentElement.classList.toggle('dark-mode', isDark);
         document.body.classList.toggle('dark-mode', isDark);
         localStorage.setItem(CONFIG.STORAGE_KEYS.DARK_MODE, isDark);
         this.applyThemeColorMeta(isDark);
@@ -5188,13 +5034,14 @@ class WallApp {
             localStorage.setItem(CONFIG.STORAGE_KEYS.DARK_MODE, 'true');
         }
         this.dom.darkModeToggle.checked = isDark;
+        document.documentElement.classList.toggle('dark-mode', isDark);
         document.body.classList.toggle('dark-mode', isDark);
         this.applyThemeColorMeta(isDark);
     }
 
     applyThemeColorMeta(isDark) {
         try {
-            const color = isDark ? '#0a0f1a' : '#fffdf2';
+            const color = isDark ? '#161311' : '#f8f5ee';
             // Update all theme-color metas so mobile UIs pick the active one
             const metas = Array.from(document.querySelectorAll('meta[name="theme-color"]'));
             if (metas.length === 0) {

@@ -2,6 +2,7 @@
   "name": "my-wall",
   "version": "1.0.0",
   "scripts": {
+    "dev:local": "node dev-server.js",
     "supabase": "supabase",
     "db:push": "supabase db push",
     "db:new": "supabase migration new"

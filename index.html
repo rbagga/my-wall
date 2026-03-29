@@ -8,9 +8,6 @@
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <title>My Wall</title>
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=SUSE+Mono:wght@100..800&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="style.css">
     <script src="config.js"></script>
 </head>
@@ -38,9 +35,16 @@
         <div id="wall"></div>
     </div>
 
-    <!-- Landing bubbles view -->
+    <!-- Landing home view -->
     <div id="homeView" class="home-view" aria-hidden="true" style="display:none;">
-        <div class="bubbles" id="bubbles"></div>
+        <div class="home-shell">
+            <div class="home-toolbar">
+                <button id="homeLoginButton" class="home-toolbar-button" type="button">login</button>
+                <button id="homeThemeButton" class="home-toolbar-button" type="button">theme</button>
+                <button id="homeAddWallButton" class="home-toolbar-button" type="button" style="display:none;">add wall</button>
+            </div>
+            <div id="homeList" class="home-list"></div>
+        </div>
     </div>
 
     <div id="modal" class="modal">
