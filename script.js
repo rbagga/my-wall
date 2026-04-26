@@ -1629,6 +1629,18 @@ class WallApp {
         return `${Math.round(feet)} ft`;
     }
 
+    getRunMedia(entry) {
+        const photos = entry && entry.raw && entry.raw.photos ? entry.raw.photos : null;
+        if (!photos) return [];
+        const media = [];
+        const primary = photos.primary;
+        if (primary && primary.urls) {
+            const url = primary.urls['600'] || primary.urls['100'] || Object.values(primary.urls)[0];
+            if (url) media.push({ url, alt: entry && entry.title ? `${entry.title} photo` : 'Run photo' });
+        }
+        return media;
+    }
+
     getRunSummary(entry) {
         const parts = [
             this.formatRunDistance(entry && entry.distance_meters),
@@ -3110,18 +3122,41 @@ class WallApp {
         this._activeRunMap = null;
     }
 
+    showImageLightbox(url, alt = 'Run photo') {
+        try {
+            const existing = document.getElementById('imageLightbox');
+            if (existing) existing.remove();
+            const wrap = document.createElement('div');
+            wrap.id = 'imageLightbox';
+            wrap.className = 'image-lightbox';
+            wrap.innerHTML = `
+                <button type="button" class="image-lightbox-close" aria-label="Close image">×</button>
+                <img class="image-lightbox-image" src="${this.escapeHtml(url)}" alt="${this.escapeHtml(alt)}">
+            `;
+            const close = () => wrap.remove();
+            wrap.addEventListener('click', (e) => {
+                if (e.target === wrap) close();
+            });
+            wrap.querySelector('.image-lightbox-close')?.addEventListener('click', close);
+            document.body.appendChild(wrap);
+        } catch (_) {}
+    }
+
     mountRunMap(entry, host) {
         try {
             if (!host) return;
             this.destroyActiveRunMap();
             const points = this.decodePolyline((entry && (entry.map_polyline || entry.map_summary_polyline)) || '');
+            const loading = host.querySelector('.run-map-loading');
             if (!points.length || typeof window === 'undefined' || !window.L) {
-                host.innerHTML = this.renderRunMapSvg(entry && (entry.map_polyline || entry.map_summary_polyline));
+                const fallback = host.querySelector('.run-map-fallback');
+                if (loading) loading.remove();
+                if (fallback) fallback.innerHTML = this.renderRunMapSvg(entry && (entry.map_polyline || entry.map_summary_polyline));
                 return;
             }
-            host.innerHTML = '<div class="run-map-canvas"></div>';
             const canvas = host.querySelector('.run-map-canvas');
             if (!canvas) return;
+            if (loading) loading.remove();
             const map = window.L.map(canvas, {
                 zoomControl: true,
                 attributionControl: false,
@@ -3133,7 +3168,7 @@ class WallApp {
                 tap: false,
             });
             this._activeRunMap = map;
-            window.L.tileLayer('https://{s}.basemaps.cartocdn.com/light_nolabels/{z}/{x}/{y}{r}.png', {
+            window.L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', {
                 subdomains: 'abcd',
                 maxZoom: 20,
             }).addTo(map);
@@ -3217,9 +3252,26 @@ class WallApp {
                 description.textContent = String(entry.description).trim();
                 container.appendChild(description);
             }
+            const media = this.getRunMedia(entry);
             const mapWrap = document.createElement('div');
             mapWrap.className = 'run-map';
-            mapWrap.innerHTML = '<div class="run-map-loading">Loading map...</div>';
+            mapWrap.innerHTML = `
+                <div class="run-map-canvas">
+                    <div class="run-map-loading">Loading map...</div>
+                </div>
+                <div class="run-map-fallback" aria-hidden="true"></div>
+            `;
+            if (media.length) {
+                const mediaButton = document.createElement('button');
+                mediaButton.type = 'button';
+                mediaButton.className = 'run-map-media-thumb';
+                mediaButton.setAttribute('aria-label', 'Open run photo');
+                mediaButton.innerHTML = `<img class="run-map-media-image" src="${this.escapeHtml(media[0].url)}" alt="${this.escapeHtml(media[0].alt)}">`;
+                mediaButton.addEventListener('click', () => {
+                    this.showImageLightbox(media[0].url, media[0].alt);
+                });
+                mapWrap.appendChild(mediaButton);
+            }
             container.appendChild(mapWrap);
 
             const stats = document.createElement('div');
