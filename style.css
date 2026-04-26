@@ -1040,6 +1040,21 @@ body.dark-mode .run-map-media-thumb {
     gap: 14px;
 }
 
+.modal-actions.run-actions {
+    display: grid;
+    grid-template-columns: 1fr auto 1fr;
+    align-items: center;
+}
+
+.modal-actions.run-actions .actions-center {
+    flex: none;
+    justify-self: center;
+}
+
+.modal-actions.run-actions .actions-right {
+    justify-self: end;
+}
+
 .modal-actions button:not(.btn-liquid) {
     padding: 10px;
     background: transparent;

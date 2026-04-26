@@ -3293,6 +3293,7 @@ class WallApp {
         if (isObj) {
             const actions = document.createElement('div');
             actions.className = 'modal-actions';
+            if (viewWall === 'runs') actions.classList.add('run-actions');
 
             const left = document.createElement('div');
             const center = document.createElement('div');
