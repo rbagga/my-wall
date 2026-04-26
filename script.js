@@ -1319,6 +1319,7 @@ class WallApp {
         // Hide entire header on home
         if (this.dom.header) this.dom.header.style.display = 'none';
         if (!this.walls || !this.walls.length) {
+            this.showHomeListLoading();
             this.fetchWalls().then(() => this.renderHomeList()).catch(() => this.renderHomeList());
         } else {
             this.renderHomeList();
@@ -1430,6 +1431,11 @@ class WallApp {
             });
             root.appendChild(button);
         });
+    }
+
+    showHomeListLoading() {
+        if (!this.dom.homeList) return;
+        this.dom.homeList.innerHTML = '<p class="home-list-loading">loading ...</p>';
     }
 
     renderBubbles() {
