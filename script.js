@@ -6,16 +6,18 @@ class WallApp {
         this.entries = [];
         this.isAuthenticated = false;
         this.dom = {};
-        this.currentWall = 'rishu'; // view context: 'rishu', 'friend', 'tech', 'songs', 'ideas', or 'drafts'
+        this.currentWall = 'rishu'; // view context: 'rishu', 'friend', 'tech', 'songs', 'runs', 'ideas', or 'drafts'
         this.walls = [];
         this.selectedWall = null; // { id, slug, name }
-        this.entriesCache = { rishu: null, friend: null, tech: null, songs: null, ideas: null, drafts: null };
+        this.entriesCache = { rishu: null, friend: null, tech: null, songs: null, runs: null, ideas: null, drafts: null };
         this.series = [];
         this.seriesLoaded = false;
         this.seriesItemsCache = new Map(); // key: seriesId -> items array
         this.spotifyCache = new Map();
         this.spotifyEmbedCache = new Map();
         this.videoMetaCache = new Map(); // url -> { title, thumbnail_url }
+        this.strava = { configured: false, connected: false, athlete: null };
+        this._activeRunMap = null;
         this._dragImg = null; // legacy HTML5 DnD ghost suppressor (no longer used)
         this._mouseDrag = { active: false, el: null };
         this._dragIntent = null; // pending drag start info (click-vs-drag threshold)
@@ -321,10 +323,25 @@ class WallApp {
     }
 
     showEmptyState() {
+        if (this.currentWall === 'runs') {
+            let actions = '';
+            if (this.isAuthenticated) {
+                if (!this.strava.configured) actions = '<div class="empty-state-actions">Strava is not configured yet.</div>';
+                else if (!this.strava.connected) actions = '<div class="empty-state-actions"><button type="button" id="connectStravaBtn" class="btn-liquid clear">connect strava</button></div>';
+                else actions = '<div class="empty-state-actions"><button type="button" id="syncStravaBtn" class="btn-liquid clear">sync runs</button></div>';
+            }
+            this.dom.wall.innerHTML = `<div class="empty-state">No runs yet.${actions}</div>`;
+            const connectBtn = document.getElementById('connectStravaBtn');
+            if (connectBtn) connectBtn.addEventListener('click', () => this.connectStrava());
+            const syncBtn = document.getElementById('syncStravaBtn');
+            if (syncBtn) syncBtn.addEventListener('click', () => this.syncRuns());
+            return;
+        }
         const msg = (
             this.currentWall === 'friend' ? "No friend entries yet." :
             this.currentWall === 'tech' ? "No tech notes yet." :
             this.currentWall === 'songs' ? "No song quotes yet." :
+            this.currentWall === 'runs' ? "No runs yet." :
             this.currentWall === 'ideas' ? "No project ideas yet." :
             this.currentWall === 'drafts' ? "No drafts yet." :
             "No notes yet."
@@ -393,6 +410,15 @@ class WallApp {
             if (this.dom && this.dom.draftsButton) this.dom.draftsButton.style.display = 'none';
             if (this.dom && this.dom.addWallButton) this.dom.addWallButton.style.display = 'none';
             if (this.dom && this.dom.loginButton) this.dom.loginButton.style.display = 'none';
+        }
+        if (this.dom && this.dom.addButton) {
+            if (this.currentWall === 'runs') {
+                this.dom.addButton.style.display = this.isAuthenticated ? '' : 'none';
+                this.dom.addButton.textContent = this.strava.connected ? 'sync runs' : 'connect strava';
+            } else {
+                this.dom.addButton.textContent = 'add entry';
+                if (!this.isHome) this.dom.addButton.style.display = '';
+            }
         }
         if (this.isHome) this.renderHomeList();
         // Re-render entries/series to reflect auth-only controls (e.g., pin buttons)
@@ -471,6 +497,22 @@ class WallApp {
                 const fresh = result.data || [];
                 this.entriesCache.ideas = fresh;
                 this.entries = fresh;
+                this.renderEntries();
+                if (this._pendingEntryId) this.openPendingEntry();
+                return;
+            }
+
+            if (wallKey === 'runs') {
+                const response = await fetch('/api/strava-runs');
+                const result = await response.json().catch(() => ({}));
+                if (!response.ok) throw new Error(result.error || 'Failed to load runs');
+                this.strava.configured = !!result.configured;
+                this.strava.connected = !!result.connected;
+                this.strava.athlete = result.athlete || null;
+                const fresh = Array.isArray(result.data) ? result.data : [];
+                this.entriesCache.runs = fresh;
+                this.entries = fresh;
+                this.updateAuthUI();
                 this.renderEntries();
                 if (this._pendingEntryId) this.openPendingEntry();
                 return;
@@ -1251,6 +1293,7 @@ class WallApp {
         let nextWall;
         if (hash.includes('tech')) nextWall = 'tech';
         else if (hash.includes('songs')) nextWall = 'songs';
+        else if (hash.includes('runs')) nextWall = 'runs';
         else if (hash.includes('ideas')) nextWall = 'ideas';
         else if (hash.includes('friend')) nextWall = 'friend';
         else if (hash.includes('draft')) nextWall = 'drafts';
@@ -1266,6 +1309,9 @@ class WallApp {
             this.dom.toggleWallButton.textContent = "rishu's wall";
         } else if (this.currentWall === 'songs') {
             this.dom.wallTitle.textContent = 'song quotes';
+            this.dom.toggleWallButton.textContent = "rishu's wall";
+        } else if (this.currentWall === 'runs') {
+            this.dom.wallTitle.textContent = 'runs';
             this.dom.toggleWallButton.textContent = "rishu's wall";
         } else if (this.currentWall === 'ideas') {
             this.dom.wallTitle.textContent = 'project ideas';
@@ -1295,12 +1341,17 @@ class WallApp {
         }
         this.loadEntries();
 
-        // Preload series info for any wall
-        this.loadSeries().then(() => {
-            if (this._pendingSeriesId) this.openPendingSeries();
-        }).catch(() => {
-            if (this._pendingSeriesId) this.openPendingSeries();
-        });
+        // Preload series info for walls that support it
+        if (this.currentWall !== 'runs') {
+            this.loadSeries().then(() => {
+                if (this._pendingSeriesId) this.openPendingSeries();
+            }).catch(() => {
+                if (this._pendingSeriesId) this.openPendingSeries();
+            });
+        } else {
+            this.series = [];
+            this.seriesLoaded = true;
+        }
     }
 
     showHome() {
@@ -1384,8 +1435,9 @@ class WallApp {
                 if (wall._virtual && slug === 'friend') return 1;
                 if (wall._virtual && slug === 'tech') return 2;
                 if (wall._virtual && slug === 'songs') return 3;
-                if (wall._virtual && slug === 'ideas') return 4;
-                if (wall._virtual && slug === 'drafts') return 5;
+                if (wall._virtual && slug === 'runs') return 4;
+                if (wall._virtual && slug === 'ideas') return 5;
+                if (wall._virtual && slug === 'drafts') return 6;
                 return 10;
             };
             const rankDiff = rank(a) - rank(b);
@@ -1407,6 +1459,7 @@ class WallApp {
             if (wall._virtual && wall.slug === 'friend') label = "friends' wall";
             if (wall._virtual && wall.slug === 'tech') label = 'random tech notes';
             if (wall._virtual && wall.slug === 'songs') label = 'song quotes';
+            if (wall._virtual && wall.slug === 'runs') label = 'runs';
             if (wall._virtual && wall.slug === 'ideas') label = 'project ideas';
             if (wall._virtual && wall.slug === 'drafts') label = 'drafts';
             button.textContent = label;
@@ -1416,6 +1469,7 @@ class WallApp {
                     else if (wall.slug === 'friend') location.hash = '#friend';
                     else if (wall.slug === 'tech') location.hash = '#tech';
                     else if (wall.slug === 'songs') location.hash = '#songs';
+                    else if (wall.slug === 'runs') location.hash = '#runs';
                     else if (wall.slug === 'ideas') location.hash = '#ideas';
                     else if (wall.slug === 'drafts') location.hash = '#drafts';
                     else location.hash = '#';
@@ -1490,6 +1544,7 @@ class WallApp {
         if (wall._virtual && wall.slug === 'friend') label = "friends' wall";
         if (wall._virtual && wall.slug === 'tech') label = 'tech notes';
         if (wall._virtual && wall.slug === 'songs') label = 'song quotes';
+        if (wall._virtual && wall.slug === 'runs') label = 'runs';
         if (wall._virtual && wall.slug === 'ideas') label = 'project ideas';
         if (wall._virtual && wall.slug === 'drafts') label = 'drafts';
         el.innerHTML = `<span>${this.escapeHtml(label)}</span>`;
@@ -1507,6 +1562,7 @@ class WallApp {
             else if (wall.slug === 'friend') location.hash = '#friend';
             else if (wall.slug === 'tech') location.hash = '#tech';
             else if (wall.slug === 'songs') location.hash = '#songs';
+            else if (wall.slug === 'runs') location.hash = '#runs';
             else if (wall.slug === 'ideas') location.hash = '#ideas';
             else if (wall.slug === 'drafts') location.hash = '#drafts';
             else location.hash = '#';
@@ -1535,9 +1591,91 @@ class WallApp {
         v.push({ _virtual: true, slug: 'friend', name: "friends' wall" });
         v.push({ _virtual: true, slug: 'tech', name: 'tech notes' });
         v.push({ _virtual: true, slug: 'songs', name: 'song quotes' });
+        v.push({ _virtual: true, slug: 'runs', name: 'runs' });
         v.push({ _virtual: true, slug: 'ideas', name: 'project ideas' });
         v.push({ _virtual: true, slug: 'drafts', name: 'drafts' });
         return v;
+    }
+
+    formatRunDistance(meters) {
+        const miles = Number(meters || 0) / 1609.344;
+        if (!Number.isFinite(miles) || miles <= 0) return '';
+        return `${miles.toFixed(miles >= 10 ? 1 : 2)} mi`;
+    }
+
+    formatRunDuration(totalSeconds) {
+        const secs = Number(totalSeconds || 0);
+        if (!Number.isFinite(secs) || secs <= 0) return '';
+        const hours = Math.floor(secs / 3600);
+        const minutes = Math.floor((secs % 3600) / 60);
+        const seconds = secs % 60;
+        if (hours > 0) return `${hours}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
+        return `${minutes}:${String(seconds).padStart(2, '0')}`;
+    }
+
+    formatRunPace(distanceMeters, movingTimeSeconds) {
+        const distanceMiles = Number(distanceMeters || 0) / 1609.344;
+        const seconds = Number(movingTimeSeconds || 0);
+        if (!Number.isFinite(distanceMiles) || !Number.isFinite(seconds) || distanceMiles <= 0 || seconds <= 0) return '';
+        const perMile = Math.round(seconds / distanceMiles);
+        const minutes = Math.floor(perMile / 60);
+        const rem = perMile % 60;
+        return `${minutes}:${String(rem).padStart(2, '0')}/mi`;
+    }
+
+    formatRunElevation(meters) {
+        const feet = Number(meters || 0) * 3.28084;
+        if (!Number.isFinite(feet) || feet <= 0) return '';
+        return `${Math.round(feet)} ft`;
+    }
+
+    getRunSummary(entry) {
+        const parts = [
+            this.formatRunDistance(entry && entry.distance_meters),
+            this.formatRunPace(entry && entry.distance_meters, entry && entry.moving_time_seconds),
+            this.formatRunElevation(entry && entry.total_elevation_gain),
+        ].filter(Boolean);
+        return parts.join(' · ') || 'Run';
+    }
+
+    async connectStrava() {
+        try {
+            const response = await fetch('/api/strava-connect', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ password: this.tempPassword }),
+            });
+            const result = await response.json().catch(() => ({}));
+            if (!response.ok) throw new Error(result.error || 'Failed to connect Strava');
+            if (result && result.authUrl) location.href = result.authUrl;
+        } catch (error) {
+            alert(String(error && error.message) || 'Failed to connect Strava.');
+        }
+    }
+
+    async syncRuns() {
+        try {
+            this.showLoading();
+            const response = await fetch('/api/strava-runs', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ password: this.tempPassword }),
+            });
+            const result = await response.json().catch(() => ({}));
+            if (!response.ok) throw new Error(result.error || 'Failed to sync runs');
+            this.strava.connected = !!result.connected;
+            this.strava.athlete = result.athlete || null;
+            this.entriesCache.runs = Array.isArray(result.data) ? result.data : [];
+            if (this.currentWall === 'runs') {
+                this.entries = this.entriesCache.runs;
+                this.updateAuthUI();
+                this.renderEntries();
+            }
+        } catch (error) {
+            this.entriesCache.runs = null;
+            alert(String(error && error.message) || 'Failed to sync runs.');
+            await this.loadEntries().catch(() => {});
+        }
     }
 
     handleAddButtonClick() {
@@ -1554,6 +1692,14 @@ class WallApp {
                 this.showSongsEntryForm();
             } else {
                 this.showPasswordForm();
+            }
+        } else if (this.currentWall === 'runs') {
+            if (!this.isAuthenticated) {
+                this.showPasswordForm();
+            } else if (!this.strava.connected) {
+                this.connectStrava();
+            } else {
+                this.syncRuns();
             }
         } else if (this.currentWall === 'ideas') {
             if (this.isAuthenticated) {
@@ -1586,7 +1732,7 @@ class WallApp {
         // Only show series on a wall's main view, not special sub-views like video/dream.
         // For rishu, restrict to the base wall (selectedWall slug 'rishu' or no selection).
         const isRishuMain = (this.currentWall === 'rishu') && (!this.selectedWall || String(this.selectedWall.slug || '').toLowerCase() === 'rishu');
-        const allowSeries = (this.currentWall !== 'drafts') && (this.currentWall !== 'rishu' ? true : isRishuMain);
+        const allowSeries = (this.currentWall !== 'drafts') && (this.currentWall !== 'runs') && (this.currentWall !== 'rishu' ? true : isRishuMain);
 
         if (!hasEntries && !hasSeries) {
             this.showEmptyState();
@@ -2685,7 +2831,7 @@ class WallApp {
 
         // Auth-only: allow DnD to add to series on all walls.
         // Avoid conflict with pinned reorder on rishu by skipping draggable for pinned rows.
-        if (this.isAuthenticated && (!entry.is_pinned || this.currentWall !== 'rishu')) {
+        if (this.isAuthenticated && this.currentWall !== 'runs' && (!entry.is_pinned || this.currentWall !== 'rishu')) {
             entryDiv.setAttribute('draggable', 'true');
             entryDiv.addEventListener('dragstart', (ev) => {
                 const payload = { id: entry.id, type: this.currentWall };
@@ -2722,6 +2868,12 @@ class WallApp {
             nameSpan.textContent = name;
             entryDiv.appendChild(timestampSpan);
             entryDiv.appendChild(nameSpan);
+        } else if (this.currentWall === 'runs') {
+            const metaSpan = document.createElement('span');
+            metaSpan.className = 'entry-name';
+            metaSpan.textContent = this.formatRunDuration(entry && entry.moving_time_seconds) || 'run';
+            entryDiv.appendChild(timestampSpan);
+            entryDiv.appendChild(metaSpan);
         } else {
             entryDiv.appendChild(timestampSpan);
         }
@@ -2782,6 +2934,8 @@ class WallApp {
             } else {
                 textSpan.innerHTML = this.linkify(entryText);
             }
+        } else if (this.currentWall === 'runs') {
+            textSpan.textContent = this.getRunSummary(entry);
         } else {
             textSpan.innerHTML = this.linkify(entryText);
         }
@@ -2803,6 +2957,8 @@ class WallApp {
             } else if (this.currentWall === 'rishu' && this.isVideoWall()) {
                 const url = this.extractFirstUrl(entry.text || '');
                 if (url) { this.showVideoModal(entry); return; }
+                this.showEntry(entry);
+            } else if (this.currentWall === 'runs') {
                 this.showEntry(entry);
             } else {
                 this.showEntry(entry);
@@ -2875,6 +3031,141 @@ class WallApp {
         } catch (_) {}
     }
 
+    decodePolyline(encoded) {
+        const points = [];
+        let index = 0;
+        let lat = 0;
+        let lng = 0;
+        const str = String(encoded || '');
+        while (index < str.length) {
+            let shift = 0;
+            let result = 0;
+            let byte = null;
+            do {
+                byte = str.charCodeAt(index++) - 63;
+                result |= (byte & 0x1f) << shift;
+                shift += 5;
+            } while (byte >= 0x20 && index <= str.length);
+            const deltaLat = (result & 1) ? ~(result >> 1) : (result >> 1);
+            lat += deltaLat;
+
+            shift = 0;
+            result = 0;
+            do {
+                byte = str.charCodeAt(index++) - 63;
+                result |= (byte & 0x1f) << shift;
+                shift += 5;
+            } while (byte >= 0x20 && index <= str.length);
+            const deltaLng = (result & 1) ? ~(result >> 1) : (result >> 1);
+            lng += deltaLng;
+
+            points.push([lat / 1e5, lng / 1e5]);
+        }
+        return points;
+    }
+
+    renderRunMapSvg(encoded) {
+        const points = this.decodePolyline(encoded);
+        if (!points.length) {
+            return '<div class="run-map-empty">No route map available.</div>';
+        }
+        let minLat = Infinity;
+        let maxLat = -Infinity;
+        let minLng = Infinity;
+        let maxLng = -Infinity;
+        points.forEach(([lat, lng]) => {
+            if (lat < minLat) minLat = lat;
+            if (lat > maxLat) maxLat = lat;
+            if (lng < minLng) minLng = lng;
+            if (lng > maxLng) maxLng = lng;
+        });
+        const width = 1000;
+        const height = 520;
+        const pad = 40;
+        const spanLng = Math.max(maxLng - minLng, 0.00001);
+        const spanLat = Math.max(maxLat - minLat, 0.00001);
+        const scale = Math.min((width - pad * 2) / spanLng, (height - pad * 2) / spanLat);
+        const toPoint = ([lat, lng]) => {
+            const x = pad + (lng - minLng) * scale;
+            const y = height - pad - (lat - minLat) * scale;
+            return `${x.toFixed(2)},${y.toFixed(2)}`;
+        };
+        const polylinePoints = points.map(toPoint).join(' ');
+        const start = toPoint(points[0]);
+        const end = toPoint(points[points.length - 1]);
+        return `
+            <svg viewBox="0 0 ${width} ${height}" role="img" aria-label="Run route map">
+                <rect x="0" y="0" width="${width}" height="${height}" rx="28" ry="28" class="run-map-bg"></rect>
+                <polyline points="${polylinePoints}" class="run-map-line"></polyline>
+                <circle cx="${start.split(',')[0]}" cy="${start.split(',')[1]}" r="10" class="run-map-start"></circle>
+                <circle cx="${end.split(',')[0]}" cy="${end.split(',')[1]}" r="10" class="run-map-end"></circle>
+            </svg>
+        `;
+    }
+
+    destroyActiveRunMap() {
+        try {
+            if (this._activeRunMap && this._activeRunMap.remove) this._activeRunMap.remove();
+        } catch (_) {}
+        this._activeRunMap = null;
+    }
+
+    mountRunMap(entry, host) {
+        try {
+            if (!host) return;
+            this.destroyActiveRunMap();
+            const points = this.decodePolyline((entry && (entry.map_polyline || entry.map_summary_polyline)) || '');
+            if (!points.length || typeof window === 'undefined' || !window.L) {
+                host.innerHTML = this.renderRunMapSvg(entry && (entry.map_polyline || entry.map_summary_polyline));
+                return;
+            }
+            host.innerHTML = '<div class="run-map-canvas"></div>';
+            const canvas = host.querySelector('.run-map-canvas');
+            if (!canvas) return;
+            const map = window.L.map(canvas, {
+                zoomControl: true,
+                attributionControl: false,
+                scrollWheelZoom: false,
+                dragging: true,
+                doubleClickZoom: false,
+                boxZoom: false,
+                keyboard: false,
+                tap: false,
+            });
+            this._activeRunMap = map;
+            window.L.tileLayer('https://{s}.basemaps.cartocdn.com/light_nolabels/{z}/{x}/{y}{r}.png', {
+                subdomains: 'abcd',
+                maxZoom: 20,
+            }).addTo(map);
+            const latLngs = points.map(([lat, lng]) => [lat, lng]);
+            const isDark = document.body.classList.contains('dark-mode');
+            const routeRenderer = window.L.canvas({ padding: 0.5 });
+            map.addLayer(routeRenderer);
+            window.L.polyline(latLngs, {
+                renderer: routeRenderer,
+                color: isDark ? '#201612' : '#fffaf4',
+                weight: isDark ? 7 : 6,
+                opacity: 0.98,
+                lineCap: 'round',
+                lineJoin: 'round',
+            }).addTo(map);
+            const route = window.L.polyline(latLngs, {
+                renderer: routeRenderer,
+                color: isDark ? '#f3dfcf' : '#4f3428',
+                weight: isDark ? 4 : 3,
+                opacity: 1,
+                lineCap: 'round',
+                lineJoin: 'round',
+            }).addTo(map);
+            const bounds = route.getBounds();
+            map.fitBounds(bounds, { padding: [28, 28] });
+            setTimeout(() => {
+                try { map.invalidateSize(); } catch (_) {}
+            }, 50);
+        } catch (_) {
+            host.innerHTML = this.renderRunMapSvg(entry && (entry.map_polyline || entry.map_summary_polyline));
+        }
+    }
 
     formatTimestamp(isoString) {
         const date = new Date(isoString);
@@ -2894,7 +3185,8 @@ class WallApp {
 
     showEntry(entry) {
         const isObj = entry && typeof entry === 'object';
-        const text = isObj ? entry.text : String(entry || '');
+        const viewWall = (entry && entry._type) ? String(entry._type) : this.currentWall;
+        const text = isObj ? ((viewWall === 'runs') ? this.getRunSummary(entry) : entry.text) : String(entry || '');
         const container = document.createElement('div');
         // Optional title heading (skip in songs modal when spotify shows metadata)
         if (isObj && entry.title && String(entry.title).trim() && !(this.currentWall === 'songs' && entry && entry.spotify_url)) {
@@ -2908,7 +3200,6 @@ class WallApp {
         content.innerHTML = this.linkify(text);
 
         // Songs modal: show Spotify embed (also when entry carries _type: 'songs')
-        const viewWall = (entry && entry._type) ? String(entry._type) : this.currentWall;
         if (viewWall === 'songs' && entry && entry.spotify_url) {
             const embedWrap = document.createElement('div');
             embedWrap.className = 'spotify-embed';
@@ -2918,6 +3209,30 @@ class WallApp {
                     if (data && data.html) embedWrap.innerHTML = data.html;
                 })
                 .catch(() => {});
+        }
+        if (viewWall === 'runs' && entry) {
+            if (entry.description && String(entry.description).trim()) {
+                const description = document.createElement('div');
+                description.className = 'run-description';
+                description.textContent = String(entry.description).trim();
+                container.appendChild(description);
+            }
+            const mapWrap = document.createElement('div');
+            mapWrap.className = 'run-map';
+            mapWrap.innerHTML = '<div class="run-map-loading">Loading map...</div>';
+            container.appendChild(mapWrap);
+
+            const stats = document.createElement('div');
+            stats.className = 'run-stats';
+            const pieces = [
+                ['Distance', this.formatRunDistance(entry.distance_meters)],
+                ['Moving', this.formatRunDuration(entry.moving_time_seconds)],
+                ['Elapsed', this.formatRunDuration(entry.elapsed_time_seconds)],
+                ['Pace', this.formatRunPace(entry.distance_meters, entry.moving_time_seconds)],
+                ['Elevation', this.formatRunElevation(entry.total_elevation_gain)],
+            ].filter(([, value]) => !!value);
+            stats.innerHTML = pieces.map(([label, value]) => `<div class="run-stat"><span>${this.escapeHtml(label)}</span><strong>${this.escapeHtml(value)}</strong></div>`).join('');
+            container.appendChild(stats);
         }
 
         container.appendChild(content);
@@ -2938,7 +3253,7 @@ class WallApp {
 
             // Delete (auth only)
             let delBtn = null;
-            if (this.isAuthenticated) {
+            if (this.isAuthenticated && viewWall !== 'runs') {
                 delBtn = document.createElement('button');
                 delBtn.type = 'button';
                 delBtn.className = 'btn-liquid clear';
@@ -3005,6 +3320,16 @@ class WallApp {
                     }
                 });
                 center.appendChild(shareBtn);
+            }
+
+            if (viewWall === 'runs' && entry && entry.external_url) {
+                const openBtn = document.createElement('a');
+                openBtn.className = 'btn-like btn-liquid clear';
+                openBtn.href = entry.external_url;
+                openBtn.target = '_blank';
+                openBtn.rel = 'noopener noreferrer';
+                openBtn.textContent = 'Open in Strava';
+                right.appendChild(openBtn);
             }
 
             // Delete confirm UI (hidden until clicked)
@@ -3103,6 +3428,10 @@ class WallApp {
         this.dom.modalBody.innerHTML = '';
         this.dom.modalBody.appendChild(container);
         this.openModal();
+        if (viewWall === 'runs' && isObj) {
+            const mapWrap = container.querySelector('.run-map');
+            setTimeout(() => this.mountRunMap(entry, mapWrap), 0);
+        }
     }
 
     showIdeasEntryForm() {
@@ -3292,6 +3621,11 @@ class WallApp {
             this.updateAuthUI();
             // Open the appropriate form for the current wall
             if (this.currentWall === 'tech') this.showTechEntryForm();
+            else if (this.currentWall === 'runs') {
+                this.closeModal();
+                if (this.strava.connected) this.syncRuns();
+                else this.connectStrava();
+            }
             else this.showEntryForm();
         })
         .catch((err) => {
@@ -4910,10 +5244,12 @@ class WallApp {
     }
 
     openModal() {
+        this.destroyActiveRunMap();
         this.dom.modal.classList.add('show');
     }
 
     closeModal() {
+        this.destroyActiveRunMap();
         this.dom.modal.classList.remove('show');
 
         // Clear modal content after animation

@@ -1,3 +1,4 @@
+const crypto = require('crypto');
 const { createClient } = require('@supabase/supabase-js');
 
 // Shared Supabase client (service role for server-side ops)
@@ -82,6 +83,253 @@ async function getDefaultWallId() {
     if (r && r.data && r.data.id) return r.data.id;
   } catch (_) {}
   return null;
+}
+
+function getPublicBaseUrl(req) {
+  const configured = String(process.env.PUBLIC_BASE_URL || '').trim();
+  if (configured) return configured.replace(/\/+$/, '');
+  const forwardedProto = String(req.headers['x-forwarded-proto'] || '').trim();
+  const proto = forwardedProto || (String(req.headers.host || '').includes('localhost') ? 'http' : 'https');
+  const host = String(req.headers['x-forwarded-host'] || req.headers.host || 'localhost:3001').trim();
+  return `${proto}://${host}`.replace(/\/+$/, '');
+}
+
+function getStravaConfig() {
+  const clientId = String(process.env.STRAVA_CLIENT_ID || '231104').trim();
+  const clientSecret = String(process.env.STRAVA_CLIENT_SECRET || '').trim();
+  const refreshToken = String(process.env.STRAVA_REFRESH_TOKEN || '').trim();
+  const accessToken = String(process.env.STRAVA_ACCESS_TOKEN || '').trim();
+  const expiresAt = String(process.env.STRAVA_EXPIRES_AT || '').trim();
+  return {
+    configured: !!(clientId && clientSecret),
+    clientId,
+    clientSecret,
+    refreshToken,
+    accessToken,
+    expiresAt,
+    callbackPath: '/api/strava-callback',
+  };
+}
+
+function getStravaRedirectUrl(req) {
+  const base = getPublicBaseUrl(req);
+  return `${base}/api/strava-callback`;
+}
+
+function signStravaState(payload) {
+  const secret = String(process.env.STRAVA_STATE_SECRET || process.env.WALL_PASSWORD || '').trim();
+  const body = Buffer.from(JSON.stringify(payload)).toString('base64url');
+  const sig = crypto.createHmac('sha256', secret).update(body).digest('base64url');
+  return `${body}.${sig}`;
+}
+
+function verifyStravaState(state) {
+  try {
+    const secret = String(process.env.STRAVA_STATE_SECRET || process.env.WALL_PASSWORD || '').trim();
+    if (!secret || !state || !state.includes('.')) return null;
+    const [body, sig] = String(state).split('.');
+    const expected = crypto.createHmac('sha256', secret).update(body).digest('base64url');
+    if (sig !== expected) return null;
+    const payload = JSON.parse(Buffer.from(body, 'base64url').toString('utf8'));
+    if (!payload || typeof payload.ts !== 'number') return null;
+    if (Date.now() - payload.ts > 10 * 60 * 1000) return null;
+    return payload;
+  } catch (_) {
+    return null;
+  }
+}
+
+function canBypassStravaState(req) {
+  const host = String(req.headers['x-forwarded-host'] || req.headers.host || '').toLowerCase();
+  return host.includes('localhost') || host.includes('127.0.0.1');
+}
+
+async function getLatestStravaConnection() {
+  try {
+    const q = await supabase.from('strava_connections').select('*').order('updated_at', { ascending: false }).limit(1).maybeSingle();
+    if (q.error) {
+      if (String(q.error.code) === '42P01' || /strava_connections/i.test(String(q.error.message || ''))) return null;
+      throw q.error;
+    }
+    return q.data || null;
+  } catch (_) {
+    return null;
+  }
+}
+
+async function saveStravaConnection(tokenPayload) {
+  const athlete = tokenPayload && tokenPayload.athlete ? tokenPayload.athlete : {};
+  const row = {
+    athlete_id: athlete.id,
+    athlete_username: athlete.username || null,
+    athlete_firstname: athlete.firstname || null,
+    athlete_lastname: athlete.lastname || null,
+    access_token: tokenPayload.access_token,
+    refresh_token: tokenPayload.refresh_token,
+    token_type: tokenPayload.token_type || null,
+    expires_at: tokenPayload.expires_at,
+    scope: Array.isArray(tokenPayload.scope) ? tokenPayload.scope.join(',') : (tokenPayload.scope || null),
+    updated_at: new Date().toISOString(),
+  };
+  const q = await supabase.from('strava_connections').upsert([row], { onConflict: 'athlete_id' }).select();
+  if (q.error) throw q.error;
+  return (q.data && q.data[0]) || row;
+}
+
+async function fetchStravaAthlete(accessToken) {
+  const resp = await fetch('https://www.strava.com/api/v3/athlete', {
+    headers: { Authorization: `Bearer ${accessToken}` },
+  });
+  const data = await resp.json().catch(() => ({}));
+  if (!resp.ok) throw new Error(data.message || 'Failed to fetch Strava athlete');
+  return data;
+}
+
+async function fetchStravaActivityDetail(accessToken, activityId) {
+  const resp = await fetch(`https://www.strava.com/api/v3/activities/${encodeURIComponent(activityId)}`, {
+    headers: { Authorization: `Bearer ${accessToken}` },
+  });
+  const data = await resp.json().catch(() => ({}));
+  if (!resp.ok) throw new Error(data.message || 'Failed to fetch Strava activity');
+  return data;
+}
+
+async function exchangeStravaToken(params) {
+  const cfg = getStravaConfig();
+  if (!cfg.configured) throw new Error('Strava is not configured');
+  const body = new URLSearchParams({
+    client_id: cfg.clientId,
+    client_secret: cfg.clientSecret,
+    ...params,
+  });
+  const resp = await fetch('https://www.strava.com/oauth/token', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: body.toString(),
+  });
+  const data = await resp.json().catch(() => ({}));
+  if (!resp.ok) throw new Error(data.message || data.error || 'Failed to exchange Strava token');
+  return data;
+}
+
+async function ensureFreshStravaConnection() {
+  let existing = await getLatestStravaConnection();
+  if (!existing) {
+    const cfg = getStravaConfig();
+    if (cfg.configured && cfg.refreshToken) {
+      const refreshed = await exchangeStravaToken({
+        grant_type: 'refresh_token',
+        refresh_token: cfg.refreshToken,
+      });
+      if (!refreshed.athlete && refreshed.access_token) {
+        refreshed.athlete = await fetchStravaAthlete(refreshed.access_token);
+      }
+      existing = await saveStravaConnection(refreshed);
+    } else if (cfg.configured && cfg.accessToken) {
+      const athlete = await fetchStravaAthlete(cfg.accessToken);
+      existing = await saveStravaConnection({
+        access_token: cfg.accessToken,
+        refresh_token: cfg.refreshToken || cfg.accessToken,
+        token_type: 'Bearer',
+        expires_at: Number(cfg.expiresAt || 0) || (Math.floor(Date.now() / 1000) + 3000),
+        scope: 'activity:read_all',
+        athlete,
+      });
+    }
+  }
+  if (!existing) return null;
+  const expiresAt = Number(existing.expires_at || 0);
+  if (expiresAt > Math.floor(Date.now() / 1000) + 120) return existing;
+  const refreshed = await exchangeStravaToken({
+    grant_type: 'refresh_token',
+    refresh_token: existing.refresh_token,
+  });
+  return saveStravaConnection(refreshed);
+}
+
+function mapStravaActivityToRun(activity) {
+  const map = activity && activity.map ? activity.map : {};
+  return {
+    strava_id: activity.id,
+    name: activity.name || 'Run',
+    description: activity.description || null,
+    sport_type: activity.sport_type || activity.type || null,
+    start_date: activity.start_date,
+    timezone: activity.timezone || null,
+    distance_meters: activity.distance ?? null,
+    moving_time_seconds: activity.moving_time ?? null,
+    elapsed_time_seconds: activity.elapsed_time ?? null,
+    total_elevation_gain: activity.total_elevation_gain ?? null,
+    average_speed: activity.average_speed ?? null,
+    average_heartrate: activity.average_heartrate ?? null,
+    suffer_score: activity.suffer_score ?? null,
+    map_summary_polyline: map.summary_polyline || null,
+    map_polyline: map.polyline || null,
+    external_url: activity.id ? `https://www.strava.com/activities/${activity.id}` : null,
+    synced_at: new Date().toISOString(),
+    raw: activity,
+  };
+}
+
+async function syncStravaRuns() {
+  const connection = await ensureFreshStravaConnection();
+  if (!connection) return { synced: false, count: 0, connection: null };
+  const accessToken = connection.access_token;
+  const runs = [];
+  for (let page = 1; page <= 10; page++) {
+    const url = new URL('https://www.strava.com/api/v3/athlete/activities');
+    url.searchParams.set('page', String(page));
+    url.searchParams.set('per_page', '100');
+    const resp = await fetch(url.toString(), {
+      headers: { Authorization: `Bearer ${accessToken}` },
+    });
+    const data = await resp.json().catch(() => ([]));
+    if (!resp.ok) throw new Error(data.message || 'Failed to fetch Strava activities');
+    const items = Array.isArray(data) ? data : [];
+    const pageRuns = items.filter((item) => {
+      const sport = String(item && (item.sport_type || item.type) || '').toLowerCase();
+      return sport === 'run';
+    });
+    const detailedRuns = await Promise.all(pageRuns.map(async (activity) => {
+      try {
+        const detail = await fetchStravaActivityDetail(accessToken, activity.id);
+        return detail && detail.id ? detail : activity;
+      } catch (_) {
+        return activity;
+      }
+    }));
+    runs.push(...detailedRuns.map(mapStravaActivityToRun));
+    if (items.length < 100) break;
+  }
+  if (runs.length) {
+    const q = await supabase.from('strava_runs').upsert(runs, { onConflict: 'strava_id' });
+    if (q.error) throw q.error;
+  }
+  return { synced: true, count: runs.length, connection };
+}
+
+async function listStravaRuns() {
+  const q = await supabase.from('strava_runs').select('*').order('start_date', { ascending: false });
+  if (q.error) {
+    if (String(q.error.code) === '42P01' || /strava_runs/i.test(String(q.error.message || ''))) return [];
+    throw q.error;
+  }
+  return (q.data || []).map((row) => ({
+    ...row,
+    title: row.name,
+    text: row.description || '',
+    timestamp: row.start_date,
+    _type: 'runs',
+  }));
+}
+
+async function getLatestStravaRunSyncAt() {
+  const q = await supabase.from('strava_runs').select('synced_at').order('synced_at', { ascending: false }).limit(1).maybeSingle();
+  if (q.error) {
+    if (String(q.error.code) === '42P01' || /strava_runs/i.test(String(q.error.message || ''))) return null;
+    throw q.error;
+  }
+  return q.data && q.data.synced_at ? new Date(q.data.synced_at).getTime() : null;
 }
 
 async function entriesHandler(req, res, parts) {
@@ -791,6 +1039,149 @@ async function draftsHandler(req, res) {
   }
 }
 
+async function stravaStatusHandler(req, res) {
+  if (req.method !== 'GET') return res.status(405).json({ error: 'Method not allowed' });
+  try {
+    const cfg = getStravaConfig();
+    const connection = await ensureFreshStravaConnection().catch(() => getLatestStravaConnection());
+    return res.status(200).json({
+      configured: cfg.configured,
+      connected: !!connection,
+      athlete: connection ? {
+        id: connection.athlete_id,
+        username: connection.athlete_username,
+        firstname: connection.athlete_firstname,
+        lastname: connection.athlete_lastname,
+      } : null,
+    });
+  } catch (error) {
+    return res.status(500).json({ error: error.message });
+  }
+}
+
+async function stravaConnectHandler(req, res) {
+  if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
+  try {
+    const { password } = req.body || {};
+    if (password !== process.env.WALL_PASSWORD) return res.status(401).json({ error: 'Invalid password' });
+    const cfg = getStravaConfig();
+    if (!cfg.configured) return res.status(400).json({ error: 'Strava is not configured' });
+    const state = signStravaState({ ts: Date.now() });
+    const authUrl = new URL('https://www.strava.com/oauth/authorize');
+    authUrl.searchParams.set('client_id', cfg.clientId);
+    authUrl.searchParams.set('response_type', 'code');
+    authUrl.searchParams.set('redirect_uri', getStravaRedirectUrl(req));
+    authUrl.searchParams.set('approval_prompt', 'auto');
+    authUrl.searchParams.set('scope', 'activity:read_all');
+    authUrl.searchParams.set('state', state);
+    return res.status(200).json({ authUrl: authUrl.toString() });
+  } catch (error) {
+    return res.status(500).json({ error: error.message });
+  }
+}
+
+async function stravaCallbackHandler(req, res) {
+  if (req.method !== 'GET') return res.status(405).json({ error: 'Method not allowed' });
+  try {
+    const url = new URL(req.url, 'http://local');
+    const code = url.searchParams.get('code');
+    const error = url.searchParams.get('error');
+    const state = url.searchParams.get('state');
+    const base = getPublicBaseUrl(req);
+    const validState = verifyStravaState(state);
+    if (!validState && !canBypassStravaState(req)) {
+      res.statusCode = 302;
+      res.setHeader('Location', `${base}/#runs&strava=invalid_state`);
+      return res.end();
+    }
+    if (error) {
+      res.statusCode = 302;
+      res.setHeader('Location', `${base}/#runs&strava=denied`);
+      return res.end();
+    }
+    if (!code) {
+      res.statusCode = 302;
+      res.setHeader('Location', `${base}/#runs&strava=missing_code`);
+      return res.end();
+    }
+    const tokenData = await exchangeStravaToken({
+      client_id: getStravaConfig().clientId,
+      client_secret: getStravaConfig().clientSecret,
+      code,
+      grant_type: 'authorization_code',
+    });
+    await saveStravaConnection(tokenData);
+    await syncStravaRuns();
+    res.statusCode = 302;
+    res.setHeader('Location', `${base}/#runs&strava=connected`);
+    return res.end();
+  } catch (_) {
+    const base = getPublicBaseUrl(req);
+    res.statusCode = 302;
+    res.setHeader('Location', `${base}/#runs&strava=error`);
+    return res.end();
+  }
+}
+
+async function stravaRunsHandler(req, res) {
+  if (req.method === 'GET') {
+    try {
+      const cfg = getStravaConfig();
+      let connection = await ensureFreshStravaConnection().catch(() => getLatestStravaConnection());
+      const latestSyncAt = connection ? await getLatestStravaRunSyncAt().catch(() => null) : null;
+      const isStale = !latestSyncAt || (Date.now() - latestSyncAt > 30 * 60 * 1000);
+      if (connection && cfg.configured && isStale) {
+        try {
+          const result = await syncStravaRuns();
+          if (result && result.connection) connection = result.connection;
+        } catch (_) {
+          // Fall back to cached runs on sync failure.
+        }
+      }
+      const data = await listStravaRuns();
+      return res.status(200).json({
+        configured: cfg.configured,
+        connected: !!connection,
+        athlete: connection ? {
+          id: connection.athlete_id,
+          username: connection.athlete_username,
+          firstname: connection.athlete_firstname,
+          lastname: connection.athlete_lastname,
+        } : null,
+        data,
+      });
+    } catch (error) {
+      return res.status(500).json({ error: error.message });
+    }
+  }
+  if (req.method === 'POST') {
+    try {
+      const { password } = req.body || {};
+      if (password !== process.env.WALL_PASSWORD) return res.status(401).json({ error: 'Invalid password' });
+      const cfg = getStravaConfig();
+      if (!cfg.configured) return res.status(400).json({ error: 'Strava is not configured' });
+      const result = await syncStravaRuns();
+      const data = await listStravaRuns();
+      return res.status(200).json({
+        ok: true,
+        synced: result.synced,
+        count: result.count,
+        connected: !!result.connection,
+        athlete: result.connection ? {
+          id: result.connection.athlete_id,
+          username: result.connection.athlete_username,
+          firstname: result.connection.athlete_firstname,
+          lastname: result.connection.athlete_lastname,
+        } : null,
+        data,
+      });
+    } catch (error) {
+      return res.status(500).json({ error: error.message });
+    }
+  }
+  return res.status(405).json({ error: 'Method not allowed' });
+}
+
 async function techNotesHandler(req, res) {
   if (req.method === 'GET') {
     try {
@@ -1326,6 +1717,10 @@ module.exports = async function handler(req, res) {
   try {
     if (head === 'entries') return entriesHandler(req, res, parts);
     if (head === 'walls') return wallsHandler(req, res);
+    if (head === 'strava-status') return stravaStatusHandler(req, res);
+    if (head === 'strava-connect') return stravaConnectHandler(req, res);
+    if (head === 'strava-callback') return stravaCallbackHandler(req, res);
+    if (head === 'strava-runs') return stravaRunsHandler(req, res);
     if (head === 'update-entry') return updateEntryHandler(req, res);
     if (head === 'delete-entry') return deleteEntryHandler(req, res);
     if (head === 'pin-entry') return pinEntryHandler(req, res);

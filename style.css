@@ -791,6 +791,170 @@ body.dark-mode .modal-content {
 .spotify-embed { margin: 8px 0 14px; }
 .spotify-embed iframe { width: 100%; max-width: 100%; border: 0; border-radius: 8px; }
 
+.run-map {
+    margin: 8px 0 14px;
+    border: 1px solid var(--border-soft);
+    border-radius: 18px;
+    overflow: hidden;
+    background: #fffaf4;
+    position: relative;
+}
+
+.run-map svg,
+.run-map-canvas {
+    display: block;
+    width: 100%;
+}
+
+.run-map-canvas {
+    height: 320px;
+    background: #fffaf4;
+}
+
+.run-map-bg {
+    fill: #fffaf4;
+}
+
+.run-map-line {
+    fill: none;
+    stroke: #6f4d3b;
+    stroke-width: 14;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+}
+
+.run-map-start {
+    fill: #2f9e44;
+    stroke: rgba(255,255,255,0.9);
+    stroke-width: 4;
+}
+
+.run-map-end {
+    fill: #d94841;
+    stroke: rgba(255,255,255,0.9);
+    stroke-width: 4;
+}
+
+.run-map-empty {
+    padding: 18px;
+    text-align: center;
+    color: var(--muted-fg);
+}
+
+.run-map-loading {
+    padding: 18px;
+    text-align: center;
+    color: var(--muted-fg);
+}
+
+.run-map .leaflet-container {
+    background: #fffaf4;
+    font: inherit;
+}
+
+.run-map .leaflet-tile-pane {
+    filter: grayscale(1) sepia(0.12) brightness(0.98) contrast(1.06) saturate(0.12);
+    opacity: 0.58;
+}
+
+.run-map .leaflet-control-attribution {
+    display: none;
+}
+
+.run-map .leaflet-control-zoom {
+    margin: 14px;
+    border: 1px solid var(--border-soft);
+    border-radius: 12px;
+    overflow: hidden;
+    box-shadow: 0 2px 10px rgba(60, 35, 22, 0.08);
+}
+
+.run-map .leaflet-control-zoom a {
+    width: 32px;
+    height: 32px;
+    line-height: 32px;
+    background: rgba(255, 250, 244, 0.94);
+    color: #4f3428;
+    border-bottom: 1px solid rgba(111, 77, 59, 0.14);
+}
+
+.run-map .leaflet-control-zoom a:last-child {
+    border-bottom: none;
+}
+
+.run-map .leaflet-control-zoom a:hover {
+    background: #fffaf4;
+    color: #2d211b;
+}
+
+.run-stats {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px;
+    margin-bottom: 14px;
+}
+
+.run-stat {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    padding: 10px 12px;
+    border: 1px solid var(--border-soft);
+    border-radius: 14px;
+    background: #fffaf4;
+    text-align: left;
+}
+
+.run-stat span {
+    font-size: 11px;
+    color: var(--muted-fg);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+}
+
+.run-stat strong {
+    font-size: 15px;
+    font-weight: 600;
+}
+
+.run-description {
+    margin: 0 0 14px;
+    text-align: center;
+    color: var(--muted-fg);
+}
+
+body.dark-mode .run-map,
+body.dark-mode .run-map-canvas,
+body.dark-mode .run-map .leaflet-container,
+body.dark-mode .run-stat {
+    background: #2a1c16;
+}
+
+body.dark-mode .run-map-bg {
+    fill: #2a1c16;
+}
+
+body.dark-mode .run-map .leaflet-tile-pane {
+    filter: grayscale(1) sepia(0.1) brightness(0.42) contrast(1.05) saturate(0.08);
+    opacity: 0.52;
+}
+
+body.dark-mode .run-map .leaflet-control-zoom {
+    border-color: rgba(255, 239, 228, 0.14);
+    box-shadow: none;
+}
+
+body.dark-mode .run-map .leaflet-control-zoom a {
+    background: rgba(42, 28, 22, 0.94);
+    color: #f3dfcf;
+    border-bottom-color: rgba(255, 239, 228, 0.14);
+}
+
+body.dark-mode .run-map .leaflet-control-zoom a:hover {
+    background: #2a1c16;
+    color: #fff7ef;
+}
+
 .modal-actions {
     display: flex;
     justify-content: space-between;
@@ -850,6 +1014,17 @@ body.dark-mode .modal-content {
 .delete-confirm .confirm-btn:disabled {
     opacity: 0.6;
     cursor: not-allowed;
+}
+
+.empty-state {
+    padding: 24px 16px;
+    text-align: center;
+}
+
+.empty-state-actions {
+    margin-top: 14px;
+    display: flex;
+    justify-content: center;
 }
 
 /* Icon-only share button */
