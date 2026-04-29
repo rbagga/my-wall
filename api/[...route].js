@@ -158,7 +158,26 @@ async function getLatestStravaConnection() {
 }
 
 async function saveStravaConnection(tokenPayload) {
-  const athlete = tokenPayload && tokenPayload.athlete ? tokenPayload.athlete : {};
+  const existing = await getLatestStravaConnection();
+  let athlete = tokenPayload && tokenPayload.athlete ? tokenPayload.athlete : null;
+  if ((!athlete || !athlete.id) && tokenPayload && tokenPayload.access_token) {
+    try {
+      athlete = await fetchStravaAthlete(tokenPayload.access_token);
+    } catch (_) {
+      athlete = null;
+    }
+  }
+  if ((!athlete || !athlete.id) && existing && existing.athlete_id) {
+    athlete = {
+      id: existing.athlete_id,
+      username: existing.athlete_username,
+      firstname: existing.athlete_firstname,
+      lastname: existing.athlete_lastname,
+    };
+  }
+  if (!athlete || !athlete.id) {
+    throw new Error('Failed to resolve Strava athlete for token save');
+  }
   const row = {
     athlete_id: athlete.id,
     athlete_username: athlete.username || null,
