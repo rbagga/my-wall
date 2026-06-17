@@ -213,6 +213,14 @@ body.dark-mode .entry:hover {
 
 /* Series title landing modal */
 .entry-form.series-title-modal { min-height: 320px; padding-bottom: 72px; }
+.series-context-title {
+    margin: -4px 36px 10px;
+    text-align: center;
+    color: var(--muted-fg);
+    font-size: 14px;
+    line-height: 1.25;
+    font-weight: 600;
+}
 .series-index { margin-top: 12px; display: grid; gap: 8px; }
 .series-index-row a {
   color: inherit;

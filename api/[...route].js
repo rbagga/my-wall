@@ -1063,8 +1063,9 @@ async function stravaStatusHandler(req, res) {
   try {
     const cfg = getStravaConfig();
     const connection = await ensureFreshStravaConnection().catch(() => getLatestStravaConnection());
+    const available = !!connection || cfg.configured;
     return res.status(200).json({
-      configured: cfg.configured,
+      configured: available,
       connected: !!connection,
       athlete: connection ? {
         id: connection.athlete_id,
@@ -1149,7 +1150,7 @@ async function stravaRunsHandler(req, res) {
       let connection = await ensureFreshStravaConnection().catch(() => getLatestStravaConnection());
       const latestSyncAt = connection ? await getLatestStravaRunSyncAt().catch(() => null) : null;
       const isStale = !latestSyncAt || (Date.now() - latestSyncAt > 30 * 60 * 1000);
-      if (connection && cfg.configured && isStale) {
+      if (connection && isStale) {
         try {
           const result = await syncStravaRuns();
           if (result && result.connection) connection = result.connection;
@@ -1158,8 +1159,9 @@ async function stravaRunsHandler(req, res) {
         }
       }
       const data = await listStravaRuns();
+      const available = !!connection || cfg.configured;
       return res.status(200).json({
-        configured: cfg.configured,
+        configured: available,
         connected: !!connection,
         athlete: connection ? {
           id: connection.athlete_id,
@@ -1178,8 +1180,14 @@ async function stravaRunsHandler(req, res) {
       const { password } = req.body || {};
       if (password !== process.env.WALL_PASSWORD) return res.status(401).json({ error: 'Invalid password' });
       const cfg = getStravaConfig();
-      if (!cfg.configured) return res.status(400).json({ error: 'Strava is not configured' });
+      const existing = await getLatestStravaConnection();
+      if (!cfg.configured && !existing) {
+        return res.status(400).json({ error: 'Strava is not configured' });
+      }
       const result = await syncStravaRuns();
+      if (!result.connection) {
+        return res.status(503).json({ error: 'Strava server connection is unavailable' });
+      }
       const data = await listStravaRuns();
       return res.status(200).json({
         ok: true,

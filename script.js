@@ -326,13 +326,10 @@ class WallApp {
         if (this.currentWall === 'runs') {
             let actions = '';
             if (this.isAuthenticated) {
-                if (!this.strava.configured) actions = '<div class="empty-state-actions">Strava is not configured yet.</div>';
-                else if (!this.strava.connected) actions = '<div class="empty-state-actions"><button type="button" id="connectStravaBtn" class="btn-liquid clear">connect strava</button></div>';
+                if (!this.strava.configured) actions = '<div class="empty-state-actions">Strava sync is unavailable on the server.</div>';
                 else actions = '<div class="empty-state-actions"><button type="button" id="syncStravaBtn" class="btn-liquid clear">sync runs</button></div>';
             }
             this.dom.wall.innerHTML = `<div class="empty-state">No runs yet.${actions}</div>`;
-            const connectBtn = document.getElementById('connectStravaBtn');
-            if (connectBtn) connectBtn.addEventListener('click', () => this.connectStrava());
             const syncBtn = document.getElementById('syncStravaBtn');
             if (syncBtn) syncBtn.addEventListener('click', () => this.syncRuns());
             return;
@@ -414,7 +411,7 @@ class WallApp {
         if (this.dom && this.dom.addButton) {
             if (this.currentWall === 'runs') {
                 this.dom.addButton.style.display = this.isAuthenticated ? '' : 'none';
-                this.dom.addButton.textContent = this.strava.connected ? 'sync runs' : 'connect strava';
+                this.dom.addButton.textContent = 'sync runs';
             } else {
                 this.dom.addButton.textContent = 'add entry';
                 if (!this.isHome) this.dom.addButton.style.display = '';
@@ -1650,21 +1647,6 @@ class WallApp {
         return parts.join(' · ') || 'Run';
     }
 
-    async connectStrava() {
-        try {
-            const response = await fetch('/api/strava-connect', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ password: this.tempPassword }),
-            });
-            const result = await response.json().catch(() => ({}));
-            if (!response.ok) throw new Error(result.error || 'Failed to connect Strava');
-            if (result && result.authUrl) location.href = result.authUrl;
-        } catch (error) {
-            alert(String(error && error.message) || 'Failed to connect Strava.');
-        }
-    }
-
     async syncRuns() {
         try {
             this.showLoading();
@@ -1708,8 +1690,6 @@ class WallApp {
         } else if (this.currentWall === 'runs') {
             if (!this.isAuthenticated) {
                 this.showPasswordForm();
-            } else if (!this.strava.connected) {
-                this.connectStrava();
             } else {
                 this.syncRuns();
             }
@@ -2067,28 +2047,19 @@ class WallApp {
             const state = { pos: (typeof startIndex === 'number' ? startIndex : -1) };
 
             const injectOverlay = () => {
-                // Remove previous overlay if any
-                const prev = document.getElementById('seriesNavOverlay');
-                if (prev) prev.remove();
-                const overlay = document.createElement('div');
-                overlay.id = 'seriesNavOverlay';
-                overlay.style.position = 'absolute';
-                overlay.style.inset = '0';
-                overlay.style.pointerEvents = 'none';
-                // Title centered at top only when viewing child entries (avoid duplicate on title-only page)
+                // Remove the old absolute overlay and any previous inline context title.
+                const prevOverlay = document.getElementById('seriesNavOverlay');
+                if (prevOverlay) prevOverlay.remove();
+                this.dom.modalBody.querySelectorAll('.series-context-title').forEach(el => el.remove());
+
+                // Child entries need the series title as context, but it must participate
+                // in normal layout so it does not overlap the child entry title.
                 if (state.pos >= 0) {
                     const title = document.createElement('div');
+                    title.className = 'series-context-title';
                     title.textContent = String(series.title || 'Series');
-                    title.style.position = 'absolute';
-                    title.style.top = '8px';
-                    title.style.left = '50%';
-                    title.style.transform = 'translateX(-50%)';
-                    title.style.fontWeight = '700';
-                    title.style.pointerEvents = 'none';
-                    overlay.appendChild(title);
+                    this.dom.modalBody.insertBefore(title, this.dom.modalBody.firstChild);
                 }
-                // Do not add overlay arrows; child modal uses bottom actions bar arrows
-                this.dom.modalBody.appendChild(overlay);
             };
 
             const renderTitleOnly = () => {
@@ -3676,8 +3647,7 @@ class WallApp {
             if (this.currentWall === 'tech') this.showTechEntryForm();
             else if (this.currentWall === 'runs') {
                 this.closeModal();
-                if (this.strava.connected) this.syncRuns();
-                else this.connectStrava();
+                this.syncRuns();
             }
             else this.showEntryForm();
         })
