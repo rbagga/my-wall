@@ -1459,7 +1459,7 @@ class WallApp {
                 if (wall._virtual && slug === 'runs') return 4;
                 if (wall._virtual && slug === 'ideas') return 5;
                 if (wall._virtual && slug === 'drafts') return 6;
-                if (wall._virtual && slug === 'resume') return 7;
+                if (wall._virtual && slug === 'resume') return 99;
                 return 10;
             };
             const rankDiff = rank(a) - rank(b);
