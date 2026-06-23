@@ -401,6 +401,100 @@ body.dark-mode .entry.pinned {
     text-align: center;
 }
 
+.resume-loading {
+    padding: 24px 16px;
+    text-align: center;
+    color: var(--muted-fg);
+}
+
+.resume-wall {
+    width: min(920px, 100%);
+    margin: 0 auto;
+    padding: clamp(14px, 3vw, 28px);
+    display: grid;
+    gap: 22px;
+}
+
+.resume-actions {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 12px;
+}
+
+.resume-page-wrap {
+    position: relative;
+    width: 100%;
+}
+
+.resume-page {
+    display: block;
+    width: 100%;
+    height: auto;
+    background: transparent;
+}
+
+.resume-link-layer {
+    position: absolute;
+    inset: 0;
+    z-index: 2;
+    pointer-events: none;
+}
+
+.resume-link {
+    position: absolute;
+    display: block;
+    background: transparent;
+    pointer-events: auto;
+}
+
+.resume-link:focus-visible {
+    outline: 1px solid var(--accent);
+    outline-offset: 2px;
+}
+
+.resume-upload-form input[type="file"] {
+    width: 100%;
+    color: var(--page-fg);
+}
+
+.resume-upload-form input[type="file"]::file-selector-button {
+    margin-right: 12px;
+    padding: 6px 12px;
+    border: 1px solid var(--border-soft);
+    border-radius: 999px;
+    background: transparent;
+    color: var(--page-fg);
+    font: inherit;
+    cursor: pointer;
+}
+
+.resume-upload-form input[type="file"]::file-selector-button:hover {
+    background: var(--hover-soft);
+    border-color: var(--accent);
+}
+
+.resume-upload-form input[type="file"]::-webkit-file-upload-button {
+    margin-right: 12px;
+    padding: 6px 12px;
+    border: 1px solid var(--border-soft);
+    border-radius: 999px;
+    background: transparent;
+    color: var(--page-fg);
+    font: inherit;
+    cursor: pointer;
+}
+
+.resume-upload-form input[type="file"]::-webkit-file-upload-button:hover {
+    background: var(--hover-soft);
+    border-color: var(--accent);
+}
+
+.resume-error .btn-liquid {
+    margin-top: 8px;
+}
+
 @media (max-width: 640px) {
     .home-shell {
         width: calc(100vw - 32px);
@@ -608,6 +702,7 @@ body.dark-mode {
     position: relative;
     display: inline-flex;
     align-items: center;
+    font: inherit;
     gap: 8px;
     padding: 8px 14px;
     border-radius: 999px;

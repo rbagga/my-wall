@@ -6,10 +6,10 @@ class WallApp {
         this.entries = [];
         this.isAuthenticated = false;
         this.dom = {};
-        this.currentWall = 'rishu'; // view context: 'rishu', 'friend', 'tech', 'songs', 'runs', 'ideas', or 'drafts'
+        this.currentWall = 'rishu'; // view context: 'rishu', 'friend', 'tech', 'songs', 'runs', 'resume', 'ideas', or 'drafts'
         this.walls = [];
         this.selectedWall = null; // { id, slug, name }
-        this.entriesCache = { rishu: null, friend: null, tech: null, songs: null, runs: null, ideas: null, drafts: null };
+        this.entriesCache = { rishu: null, friend: null, tech: null, songs: null, runs: null, resume: null, ideas: null, drafts: null };
         this.series = [];
         this.seriesLoaded = false;
         this.seriesItemsCache = new Map(); // key: seriesId -> items array
@@ -18,6 +18,15 @@ class WallApp {
         this.videoMetaCache = new Map(); // url -> { title, thumbnail_url }
         this.strava = { configured: false, connected: false, athlete: null };
         this._activeRunMap = null;
+        this.resume = {
+            url: '/assets/rishu-bagga-resume-2026.pdf',
+            fallbackUrl: '/assets/rishu-bagga-resume-2026.pdf',
+            filename: 'rishu-bagga-resume-2026.pdf',
+            pdf: null,
+            pages: [],
+            renderedTheme: null,
+            sourceLoaded: false,
+        };
         this._dragImg = null; // legacy HTML5 DnD ghost suppressor (no longer used)
         this._mouseDrag = { active: false, el: null };
         this._dragIntent = null; // pending drag start info (click-vs-drag threshold)
@@ -412,6 +421,10 @@ class WallApp {
             if (this.currentWall === 'runs') {
                 this.dom.addButton.style.display = this.isAuthenticated ? '' : 'none';
                 this.dom.addButton.textContent = 'sync runs';
+            } else if (this.currentWall === 'resume') {
+                this.dom.addButton.textContent = 'upload pdf';
+                this.dom.addButton.style.display = 'none';
+                this.updateResumeActions();
             } else {
                 this.dom.addButton.textContent = 'add entry';
                 if (!this.isHome) this.dom.addButton.style.display = '';
@@ -512,6 +525,13 @@ class WallApp {
                 this.updateAuthUI();
                 this.renderEntries();
                 if (this._pendingEntryId) this.openPendingEntry();
+                return;
+            }
+
+            if (wallKey === 'resume') {
+                this.entriesCache.resume = [];
+                this.entries = [];
+                await this.renderResumeWall();
                 return;
             }
 
@@ -1291,6 +1311,7 @@ class WallApp {
         if (hash.includes('tech')) nextWall = 'tech';
         else if (hash.includes('songs')) nextWall = 'songs';
         else if (hash.includes('runs')) nextWall = 'runs';
+        else if (hash.includes('resume')) nextWall = 'resume';
         else if (hash.includes('ideas')) nextWall = 'ideas';
         else if (hash.includes('friend')) nextWall = 'friend';
         else if (hash.includes('draft')) nextWall = 'drafts';
@@ -1309,6 +1330,9 @@ class WallApp {
             this.dom.toggleWallButton.textContent = "rishu's wall";
         } else if (this.currentWall === 'runs') {
             this.dom.wallTitle.textContent = 'runs';
+            this.dom.toggleWallButton.textContent = "rishu's wall";
+        } else if (this.currentWall === 'resume') {
+            this.dom.wallTitle.textContent = 'resume';
             this.dom.toggleWallButton.textContent = "rishu's wall";
         } else if (this.currentWall === 'ideas') {
             this.dom.wallTitle.textContent = 'project ideas';
@@ -1339,7 +1363,7 @@ class WallApp {
         this.loadEntries();
 
         // Preload series info for walls that support it
-        if (this.currentWall !== 'runs') {
+        if (this.currentWall !== 'runs' && this.currentWall !== 'resume') {
             this.loadSeries().then(() => {
                 if (this._pendingSeriesId) this.openPendingSeries();
             }).catch(() => {
@@ -1433,8 +1457,9 @@ class WallApp {
                 if (wall._virtual && slug === 'tech') return 2;
                 if (wall._virtual && slug === 'songs') return 3;
                 if (wall._virtual && slug === 'runs') return 4;
-                if (wall._virtual && slug === 'ideas') return 5;
-                if (wall._virtual && slug === 'drafts') return 6;
+                if (wall._virtual && slug === 'resume') return 5;
+                if (wall._virtual && slug === 'ideas') return 6;
+                if (wall._virtual && slug === 'drafts') return 7;
                 return 10;
             };
             const rankDiff = rank(a) - rank(b);
@@ -1457,6 +1482,7 @@ class WallApp {
             if (wall._virtual && wall.slug === 'tech') label = 'random tech notes';
             if (wall._virtual && wall.slug === 'songs') label = 'song quotes';
             if (wall._virtual && wall.slug === 'runs') label = 'runs';
+            if (wall._virtual && wall.slug === 'resume') label = 'resume';
             if (wall._virtual && wall.slug === 'ideas') label = 'project ideas';
             if (wall._virtual && wall.slug === 'drafts') label = 'drafts';
             button.textContent = label;
@@ -1467,6 +1493,7 @@ class WallApp {
                     else if (wall.slug === 'tech') location.hash = '#tech';
                     else if (wall.slug === 'songs') location.hash = '#songs';
                     else if (wall.slug === 'runs') location.hash = '#runs';
+                    else if (wall.slug === 'resume') location.hash = '#resume';
                     else if (wall.slug === 'ideas') location.hash = '#ideas';
                     else if (wall.slug === 'drafts') location.hash = '#drafts';
                     else location.hash = '#';
@@ -1542,6 +1569,7 @@ class WallApp {
         if (wall._virtual && wall.slug === 'tech') label = 'tech notes';
         if (wall._virtual && wall.slug === 'songs') label = 'song quotes';
         if (wall._virtual && wall.slug === 'runs') label = 'runs';
+        if (wall._virtual && wall.slug === 'resume') label = 'resume';
         if (wall._virtual && wall.slug === 'ideas') label = 'project ideas';
         if (wall._virtual && wall.slug === 'drafts') label = 'drafts';
         el.innerHTML = `<span>${this.escapeHtml(label)}</span>`;
@@ -1560,6 +1588,7 @@ class WallApp {
             else if (wall.slug === 'tech') location.hash = '#tech';
             else if (wall.slug === 'songs') location.hash = '#songs';
             else if (wall.slug === 'runs') location.hash = '#runs';
+            else if (wall.slug === 'resume') location.hash = '#resume';
             else if (wall.slug === 'ideas') location.hash = '#ideas';
             else if (wall.slug === 'drafts') location.hash = '#drafts';
             else location.hash = '#';
@@ -1589,9 +1618,465 @@ class WallApp {
         v.push({ _virtual: true, slug: 'tech', name: 'tech notes' });
         v.push({ _virtual: true, slug: 'songs', name: 'song quotes' });
         v.push({ _virtual: true, slug: 'runs', name: 'runs' });
+        v.push({ _virtual: true, slug: 'resume', name: 'resume' });
         v.push({ _virtual: true, slug: 'ideas', name: 'project ideas' });
         v.push({ _virtual: true, slug: 'drafts', name: 'drafts' });
         return v;
+    }
+
+    getThemeRgb(varName, fallback) {
+        try {
+            const value = getComputedStyle(document.body).getPropertyValue(varName).trim() || fallback;
+            const probe = document.createElement('span');
+            probe.style.color = value;
+            probe.style.position = 'absolute';
+            probe.style.visibility = 'hidden';
+            document.body.appendChild(probe);
+            const rgb = getComputedStyle(probe).color;
+            probe.remove();
+            const m = rgb.match(/rgba?\((\d+),\s*(\d+),\s*(\d+)/i);
+            if (m) return [Number(m[1]), Number(m[2]), Number(m[3])];
+        } catch (_) {}
+        const hex = String(fallback || '#20130e').replace('#', '');
+        if (hex.length === 6) {
+            return [
+                parseInt(hex.slice(0, 2), 16),
+                parseInt(hex.slice(2, 4), 16),
+                parseInt(hex.slice(4, 6), 16),
+            ];
+        }
+        return [32, 19, 14];
+    }
+
+    async loadResumeSource(force = false) {
+        if (!force && this.resume.sourceLoaded) return this.resume.url;
+        try {
+            const response = await fetch('/api/resume', { cache: 'no-store' });
+            const result = await response.json().catch(() => ({}));
+            if (!response.ok) throw new Error(result.error || 'Failed to load resume');
+            const nextUrl = result.url || this.resume.fallbackUrl;
+            if (nextUrl !== this.resume.url) {
+                this.resume.pdf = null;
+                this.resume.renderedTheme = null;
+            }
+            this.resume.url = nextUrl;
+            this.resume.fallbackUrl = result.fallbackUrl || this.resume.fallbackUrl;
+            this.resume.filename = result.filename || this.resume.filename;
+            this.resume.sourceLoaded = true;
+        } catch (error) {
+            console.warn('Resume source failed:', error);
+            this.resume.url = this.resume.fallbackUrl;
+            this.resume.sourceLoaded = true;
+        }
+        return this.resume.url;
+    }
+
+    buildResumeActions() {
+        const actions = document.createElement('div');
+        actions.className = 'resume-actions';
+
+        const download = document.createElement('button');
+        download.type = 'button';
+        download.className = 'btn-liquid clear';
+        download.textContent = 'download pdf';
+        download.addEventListener('click', () => {
+            const link = document.createElement('a');
+            link.href = this.resume.url || this.resume.fallbackUrl;
+            link.download = this.resume.filename || 'resume.pdf';
+            link.target = '_blank';
+            link.rel = 'noopener noreferrer';
+            document.body.appendChild(link);
+            link.click();
+            link.remove();
+        });
+        actions.appendChild(download);
+
+        if (this.isAuthenticated) {
+            const upload = document.createElement('button');
+            upload.type = 'button';
+            upload.className = 'btn-liquid clear';
+            upload.textContent = 'upload pdf';
+            upload.addEventListener('click', () => this.showResumeUploadForm());
+            actions.appendChild(upload);
+        }
+
+        return actions;
+    }
+
+    updateResumeActions() {
+        if (!this.dom.wall || this.currentWall !== 'resume') return;
+        const existing = this.dom.wall.querySelector('.resume-actions');
+        if (!existing) return;
+        existing.replaceWith(this.buildResumeActions());
+    }
+
+    fileToBase64(file) {
+        return new Promise((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onload = () => {
+                const value = String(reader.result || '');
+                const comma = value.indexOf(',');
+                resolve(comma >= 0 ? value.slice(comma + 1) : value);
+            };
+            reader.onerror = () => reject(reader.error || new Error('Failed to read file'));
+            reader.readAsDataURL(file);
+        });
+    }
+
+    showResumeUploadForm() {
+        if (!this.isAuthenticated) {
+            this.showPasswordForm();
+            return;
+        }
+
+        const form = document.createElement('form');
+        form.className = 'entry-form resume-upload-form';
+        form.innerHTML = `
+            <h3>Upload resume</h3>
+            <input type="file" id="resumeFileInput" accept="application/pdf,.pdf" required>
+            <div id="resumeUploadError" class="error"></div>
+            <button type="submit" class="btn-liquid clear">Upload</button>
+        `;
+        this.dom.modalBody.innerHTML = '';
+        this.dom.modalBody.appendChild(form);
+
+        form.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            if (form.classList.contains('is-submitting')) return;
+            const input = form.querySelector('#resumeFileInput');
+            const errorEl = form.querySelector('#resumeUploadError');
+            const submit = form.querySelector('button[type="submit"]');
+            const file = input && input.files && input.files[0];
+            errorEl.textContent = '';
+            if (!file) {
+                errorEl.textContent = 'Choose a PDF.';
+                return;
+            }
+            if (file.type && file.type !== 'application/pdf') {
+                errorEl.textContent = 'Choose a PDF.';
+                return;
+            }
+            if (file.size > 10 * 1024 * 1024) {
+                errorEl.textContent = 'PDF must be 10MB or smaller.';
+                return;
+            }
+
+            form.classList.add('is-submitting');
+            if (submit) submit.disabled = true;
+            try {
+                const data = await this.fileToBase64(file);
+                const response = await fetch('/api/resume', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        password: this.tempPassword,
+                        filename: file.name,
+                        contentType: file.type || 'application/pdf',
+                        data,
+                    }),
+                });
+                const result = await response.json().catch(() => ({}));
+                if (!response.ok) throw new Error(result.error || 'Failed to upload resume');
+                const nextUrl = result.url || this.resume.fallbackUrl;
+                this.resume.url = `${nextUrl}${nextUrl.includes('?') ? '&' : '?'}v=${Date.now()}`;
+                this.resume.filename = result.filename || file.name || this.resume.filename;
+                this.resume.pdf = null;
+                this.resume.renderedTheme = null;
+                this.resume.sourceLoaded = true;
+                this.closeModal();
+                await this.renderResumeWall(true);
+            } catch (error) {
+                errorEl.textContent = String(error && error.message) || 'Failed to upload resume.';
+            } finally {
+                if (submit) submit.disabled = false;
+                form.classList.remove('is-submitting');
+            }
+        });
+
+        this.openModal();
+        setTimeout(() => form.querySelector('#resumeFileInput')?.focus(), 50);
+    }
+
+    getResumeThemeKey() {
+        return document.body.classList.contains('dark-mode') ? 'dark' : 'light';
+    }
+
+    getResumeForegroundRgb() {
+        const isDark = document.body.classList.contains('dark-mode');
+        return this.getThemeRgb('--page-fg', isDark ? '#f7efe4' : '#20130e');
+    }
+
+    recolorResumeCanvas(canvas, fg = this.getResumeForegroundRgb()) {
+        if (!canvas || !canvas._resumeAlpha) return false;
+        const ctx = canvas.getContext('2d', { willReadFrequently: true });
+        const image = ctx.getImageData(0, 0, canvas.width, canvas.height);
+        const data = image.data;
+        const alphaMask = canvas._resumeAlpha;
+        for (let i = 0, j = 0; i < data.length; i += 4, j++) {
+            const alpha = alphaMask[j] || 0;
+            data[i] = fg[0];
+            data[i + 1] = fg[1];
+            data[i + 2] = fg[2];
+            data[i + 3] = alpha;
+        }
+        ctx.putImageData(image, 0, 0);
+        return true;
+    }
+
+    recolorResumeCanvases() {
+        if (!this.dom.wall || this.currentWall !== 'resume') return false;
+        const canvases = Array.from(this.dom.wall.querySelectorAll('.resume-page'));
+        if (!canvases.length) return false;
+        const fg = this.getResumeForegroundRgb();
+        let recolored = false;
+        canvases.forEach((canvas) => {
+            recolored = this.recolorResumeCanvas(canvas, fg) || recolored;
+        });
+        if (recolored) this.resume.renderedTheme = this.getResumeThemeKey();
+        return recolored;
+    }
+
+    sanitizeResumeLink(url) {
+        const value = String(url || '').trim().replace(/[|.,;:]+$/, '');
+        if (!value) return '';
+        if (/^(https?:|mailto:|tel:)/i.test(value)) return value;
+        if (/^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,}(?:\/[^\s<>()]*)?$/i.test(value)) {
+            return `https://${value}`;
+        }
+        return '';
+    }
+
+    getResumeTextLinks(text) {
+        const value = String(text || '').replace(/\s*([./])\s*/g, '$1').trim();
+        if (!value) return [];
+        const links = [];
+        const emailPattern = /[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi;
+        for (const match of value.matchAll(emailPattern)) {
+            const raw = match[0].replace(/[|.,;:]+$/, '');
+            links.push({ text: raw, href: `mailto:${raw}`, index: match.index || 0 });
+        }
+
+        const urlPattern = /(?:https?:\/\/|www\.)[^\s<>()]+|(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,}(?:\/[^\s<>()]*)?/gi;
+        for (const match of value.matchAll(urlPattern)) {
+            const raw = match[0].replace(/[|.,;:]+$/, '');
+            if (!raw || links.some((link) => link.text === raw)) continue;
+            if (raw.includes('@')) continue;
+            const href = /^https?:\/\//i.test(raw) ? raw : `https://${raw}`;
+            links.push({ text: raw, href, index: match.index || 0 });
+        }
+        return links;
+    }
+
+    getResumeTextItemBox(item, viewport) {
+        const util = window.pdfjsLib && window.pdfjsLib.Util;
+        if (!util || !item || !item.transform) return null;
+        const tx = util.transform(viewport.transform, item.transform);
+        const text = String(item.str || '');
+        const width = Math.max(1, Number(item.width || 0) * viewport.scale);
+        const height = Math.max(1, Math.abs(tx[3]) || Number(item.height || 0) * viewport.scale);
+        return {
+            text,
+            left: tx[4],
+            top: tx[5] - height,
+            width,
+            height,
+            y: tx[5],
+        };
+    }
+
+    buildResumeTextLines(items, viewport) {
+        const boxes = (items || [])
+            .map((item) => this.getResumeTextItemBox(item, viewport))
+            .filter((box) => box && box.text);
+        const lines = [];
+        boxes.forEach((box) => {
+            let line = lines.find((candidate) => Math.abs(candidate.y - box.y) <= Math.max(4, box.height * 0.45));
+            if (!line) {
+                line = { y: box.y, boxes: [] };
+                lines.push(line);
+            }
+            line.boxes.push(box);
+        });
+        return lines.map((line) => {
+            const boxesSorted = line.boxes.sort((a, b) => a.left - b.left);
+            let text = '';
+            const segments = [];
+            boxesSorted.forEach((box) => {
+                const previous = segments[segments.length - 1];
+                const gap = previous ? box.left - (previous.left + previous.width) : 0;
+                if (previous && gap > Math.max(2, box.height * 0.15)) text += ' ';
+                const start = text.length;
+                text += box.text;
+                segments.push({ ...box, start, end: start + box.text.length });
+            });
+            return { text, segments };
+        });
+    }
+
+    addResumeTextLinks(textContent, viewport, addLink) {
+        const seen = new Set();
+        this.buildResumeTextLines(textContent.items || [], viewport).forEach((line) => {
+            this.getResumeTextLinks(line.text).forEach((found) => {
+                const start = found.index;
+                const end = start + found.text.length;
+                const overlapping = line.segments.filter((segment) => segment.end > start && segment.start < end);
+                if (!overlapping.length) return;
+
+                const lefts = [];
+                const rights = [];
+                let top = Infinity;
+                let bottom = -Infinity;
+                overlapping.forEach((segment) => {
+                    const segmentLength = Math.max(1, segment.end - segment.start);
+                    const overlapStart = Math.max(start, segment.start);
+                    const overlapEnd = Math.min(end, segment.end);
+                    const leftRatio = (overlapStart - segment.start) / segmentLength;
+                    const rightRatio = (overlapEnd - segment.start) / segmentLength;
+                    lefts.push(segment.left + segment.width * leftRatio);
+                    rights.push(segment.left + segment.width * rightRatio);
+                    top = Math.min(top, segment.top);
+                    bottom = Math.max(bottom, segment.top + segment.height * 1.2);
+                });
+
+                const left = Math.min(...lefts);
+                const right = Math.max(...rights);
+                const key = `${found.href}:${Math.round(left)}:${Math.round(top)}`;
+                if (seen.has(key)) return;
+                seen.add(key);
+                addLink(found.href, left, top, right - left, bottom - top, found.text);
+            });
+        });
+    }
+
+    async buildResumeLinkLayer(page, viewport) {
+        const layer = document.createElement('div');
+        layer.className = 'resume-link-layer';
+        const addLink = (href, left, top, width, height, label = href) => {
+            if (!href || width <= 0 || height <= 0) return;
+            const link = document.createElement('a');
+            link.className = 'resume-link';
+            link.href = href;
+            link.target = '_blank';
+            link.rel = 'noopener noreferrer';
+            link.setAttribute('aria-label', label);
+            link.style.left = `${(left / viewport.width) * 100}%`;
+            link.style.top = `${(top / viewport.height) * 100}%`;
+            link.style.width = `${(width / viewport.width) * 100}%`;
+            link.style.height = `${(height / viewport.height) * 100}%`;
+            layer.appendChild(link);
+        };
+
+        let annotations = [];
+        try {
+            annotations = await page.getAnnotations({ intent: 'display' });
+        } catch (_) {
+            annotations = [];
+        }
+
+        annotations.forEach((annotation) => {
+            if (!annotation || annotation.subtype !== 'Link' || !annotation.rect) return;
+            const href = this.sanitizeResumeLink(annotation.url || annotation.unsafeUrl);
+            if (!href) return;
+
+            const rect = viewport.convertToViewportRectangle(annotation.rect);
+            const left = Math.min(rect[0], rect[2]);
+            const top = Math.min(rect[1], rect[3]);
+            const width = Math.abs(rect[2] - rect[0]);
+            const height = Math.abs(rect[3] - rect[1]);
+            if (width <= 0 || height <= 0) return;
+
+            addLink(href, left, top, width, height, annotation.title || href);
+        });
+
+        try {
+            const textContent = await page.getTextContent();
+            this.addResumeTextLinks(textContent, viewport, addLink);
+        } catch (_) {}
+
+        return layer;
+    }
+
+    async renderResumeWall(force = false) {
+        if (!this.dom.wall || this.currentWall !== 'resume') return;
+        const themeKey = this.getResumeThemeKey();
+        const existing = this.dom.wall.querySelector('.resume-wall');
+        if (!force && existing) {
+            this.updateResumeActions();
+            if (this.resume.renderedTheme !== themeKey) this.recolorResumeCanvases();
+            return;
+        }
+
+        this.dom.wall.innerHTML = '<div class="resume-loading">loading resume ...</div>';
+        try {
+            await this.loadResumeSource(force);
+            if (!window.pdfjsLib) throw new Error('PDF renderer unavailable');
+            window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+            if (!this.resume.pdf) {
+                this.resume.pdf = await window.pdfjsLib.getDocument(this.resume.url).promise;
+            }
+
+            const fg = this.getResumeForegroundRgb();
+            const shell = document.createElement('div');
+            shell.className = 'resume-wall';
+            shell.appendChild(this.buildResumeActions());
+
+            for (let pageNo = 1; pageNo <= this.resume.pdf.numPages; pageNo++) {
+                const page = await this.resume.pdf.getPage(pageNo);
+                const viewport = page.getViewport({ scale: 2 });
+                const pageWrap = document.createElement('div');
+                pageWrap.className = 'resume-page-wrap';
+                const canvas = document.createElement('canvas');
+                canvas.className = 'resume-page';
+                canvas.width = Math.ceil(viewport.width);
+                canvas.height = Math.ceil(viewport.height);
+                canvas.style.aspectRatio = `${canvas.width} / ${canvas.height}`;
+                const ctx = canvas.getContext('2d', { willReadFrequently: true });
+                ctx.clearRect(0, 0, canvas.width, canvas.height);
+                await page.render({
+                    canvasContext: ctx,
+                    viewport,
+                    background: 'rgba(0,0,0,0)',
+                }).promise;
+
+                const image = ctx.getImageData(0, 0, canvas.width, canvas.height);
+                const data = image.data;
+                const alphaMask = new Uint8ClampedArray(canvas.width * canvas.height);
+                for (let i = 0, j = 0; i < data.length; i += 4, j++) {
+                    const alpha = data[i + 3];
+                    if (!alpha) {
+                        alphaMask[j] = 0;
+                        continue;
+                    }
+                    const avg = (data[i] + data[i + 1] + data[i + 2]) / 3;
+                    const ink = Math.max(0, Math.min(255, 255 - avg));
+                    const nextAlpha = Math.round((ink / 255) * alpha);
+                    alphaMask[j] = nextAlpha;
+                    data[i] = fg[0];
+                    data[i + 1] = fg[1];
+                    data[i + 2] = fg[2];
+                    data[i + 3] = nextAlpha;
+                }
+                canvas._resumeAlpha = alphaMask;
+                ctx.putImageData(image, 0, 0);
+                pageWrap.appendChild(canvas);
+                pageWrap.appendChild(await this.buildResumeLinkLayer(page, viewport));
+                shell.appendChild(pageWrap);
+            }
+
+            this.dom.wall.innerHTML = '';
+            this.dom.wall.appendChild(shell);
+            this.resume.renderedTheme = themeKey;
+        } catch (error) {
+            console.error('Resume render failed:', error);
+            this.dom.wall.innerHTML = `
+                <div class="empty-state resume-error">
+                    Resume failed to load.
+                    <div class="empty-state-actions">
+                        <a class="btn-liquid clear" href="${this.escapeHtml(this.resume.url)}" target="_blank" rel="noopener noreferrer">Open PDF</a>
+                    </div>
+                </div>
+            `;
+        }
     }
 
     formatRunDistance(meters) {
@@ -1693,6 +2178,12 @@ class WallApp {
             } else {
                 this.syncRuns();
             }
+        } else if (this.currentWall === 'resume') {
+            if (this.isAuthenticated) {
+                this.showResumeUploadForm();
+            } else {
+                this.showPasswordForm();
+            }
         } else if (this.currentWall === 'ideas') {
             if (this.isAuthenticated) {
                 this.showIdeasEntryForm();
@@ -1715,6 +2206,10 @@ class WallApp {
     renderEntries() {
         // Do not render entries when on the home view
         if (this.isHome) return;
+        if (this.currentWall === 'resume') {
+            this.renderResumeWall();
+            return;
+        }
         this.dom.wall.innerHTML = '';
         // Sort: pinned first by pin_order asc, then others by timestamp desc
         let entries = [...this.entries];
@@ -5390,6 +5885,9 @@ class WallApp {
         document.body.classList.toggle('dark-mode', isDark);
         localStorage.setItem(CONFIG.STORAGE_KEYS.DARK_MODE, isDark);
         this.applyThemeColorMeta(isDark);
+        if (this.currentWall === 'resume') {
+            if (!this.recolorResumeCanvases()) this.renderResumeWall();
+        }
     }
 
     applyDarkMode() {

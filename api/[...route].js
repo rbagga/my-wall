@@ -94,6 +94,93 @@ function getPublicBaseUrl(req) {
   return `${proto}://${host}`.replace(/\/+$/, '');
 }
 
+const RESUME_FALLBACK_URL = '/assets/rishu-bagga-resume-2026.pdf';
+const RESUME_STORAGE_BUCKET = String(process.env.RESUME_STORAGE_BUCKET || 'resume').trim();
+const RESUME_STORAGE_PATH = String(process.env.RESUME_STORAGE_PATH || 'rishu-bagga-resume-2026.pdf').trim();
+
+async function ensureResumeBucket() {
+  if (!RESUME_STORAGE_BUCKET) return;
+  const created = await supabase.storage.createBucket(RESUME_STORAGE_BUCKET, {
+    public: true,
+    fileSizeLimit: 10 * 1024 * 1024,
+    allowedMimeTypes: ['application/pdf'],
+  });
+  if (created.error && !/already exists|duplicate/i.test(String(created.error.message || ''))) {
+    const listed = await supabase.storage.listBuckets();
+    const exists = (listed.data || []).some((bucket) => bucket && bucket.name === RESUME_STORAGE_BUCKET);
+    if (!exists) throw created.error;
+  }
+}
+
+async function getResumeUrl() {
+  try {
+    if (!RESUME_STORAGE_BUCKET || !RESUME_STORAGE_PATH) return RESUME_FALLBACK_URL;
+    const downloaded = await supabase.storage.from(RESUME_STORAGE_BUCKET).download(RESUME_STORAGE_PATH);
+    if (downloaded.error) return RESUME_FALLBACK_URL;
+    const pub = supabase.storage.from(RESUME_STORAGE_BUCKET).getPublicUrl(RESUME_STORAGE_PATH);
+    return (pub.data && pub.data.publicUrl) || RESUME_FALLBACK_URL;
+  } catch (_) {
+    return RESUME_FALLBACK_URL;
+  }
+}
+
+async function resumeHandler(req, res) {
+  if (req.method === 'GET') {
+    const url = await getResumeUrl();
+    return res.status(200).json({
+      url,
+      fallbackUrl: RESUME_FALLBACK_URL,
+      filename: 'rishu-bagga-resume-2026.pdf',
+    });
+  }
+
+  if (req.method === 'POST') {
+    try {
+      const { password, filename, contentType, data } = req.body || {};
+      if (password !== process.env.WALL_PASSWORD) {
+        return res.status(401).json({ error: 'Invalid password' });
+      }
+      if (!data || typeof data !== 'string') {
+        return res.status(400).json({ error: 'Missing PDF data' });
+      }
+
+      const normalizedType = String(contentType || '').toLowerCase();
+      if (normalizedType && normalizedType !== 'application/pdf') {
+        return res.status(400).json({ error: 'Resume upload must be a PDF' });
+      }
+
+      const buffer = Buffer.from(data, 'base64');
+      if (!buffer.length || buffer.length > 10 * 1024 * 1024) {
+        return res.status(400).json({ error: 'Resume PDF must be 10MB or smaller' });
+      }
+      if (buffer.slice(0, 5).toString('utf8') !== '%PDF-') {
+        return res.status(400).json({ error: 'Resume upload must be a PDF' });
+      }
+
+      await ensureResumeBucket();
+      const uploaded = await supabase.storage
+        .from(RESUME_STORAGE_BUCKET)
+        .upload(RESUME_STORAGE_PATH, buffer, {
+          contentType: 'application/pdf',
+          cacheControl: '60',
+          upsert: true,
+        });
+      if (uploaded.error) throw uploaded.error;
+
+      const url = await getResumeUrl();
+      return res.status(200).json({
+        url,
+        fallbackUrl: RESUME_FALLBACK_URL,
+        filename: String(filename || 'resume.pdf'),
+      });
+    } catch (error) {
+      return res.status(500).json({ error: error.message || 'Failed to upload resume' });
+    }
+  }
+
+  return res.status(405).json({ error: 'Method not allowed' });
+}
+
 function getStravaConfig() {
   const clientId = String(process.env.STRAVA_CLIENT_ID || '231104').trim();
   const clientSecret = String(process.env.STRAVA_CLIENT_SECRET || '').trim();
@@ -1748,6 +1835,7 @@ module.exports = async function handler(req, res) {
     if (head === 'strava-connect') return stravaConnectHandler(req, res);
     if (head === 'strava-callback') return stravaCallbackHandler(req, res);
     if (head === 'strava-runs') return stravaRunsHandler(req, res);
+    if (head === 'resume') return resumeHandler(req, res);
     if (head === 'update-entry') return updateEntryHandler(req, res);
     if (head === 'delete-entry') return deleteEntryHandler(req, res);
     if (head === 'pin-entry') return pinEntryHandler(req, res);

@@ -14,6 +14,7 @@ const MIME_TYPES = {
   '.html': 'text/html; charset=utf-8',
   '.js': 'application/javascript; charset=utf-8',
   '.json': 'application/json; charset=utf-8',
+  '.pdf': 'application/pdf',
   '.png': 'image/png',
   '.jpg': 'image/jpeg',
   '.jpeg': 'image/jpeg',
@@ -52,9 +53,11 @@ server.listen(PORT, () => {
 async function handleApi(req, res, requestUrl) {
   const chunks = [];
   for await (const chunk of req) chunks.push(chunk);
-  const body = Buffer.concat(chunks).toString('utf8');
+  const rawBody = Buffer.concat(chunks);
+  const body = rawBody.toString('utf8');
 
   req.url = requestUrl;
+  req.rawBody = rawBody;
   req.body = body;
   req.query = {};
 
