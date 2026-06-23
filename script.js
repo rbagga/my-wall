@@ -1457,9 +1457,9 @@ class WallApp {
                 if (wall._virtual && slug === 'tech') return 2;
                 if (wall._virtual && slug === 'songs') return 3;
                 if (wall._virtual && slug === 'runs') return 4;
-                if (wall._virtual && slug === 'resume') return 5;
-                if (wall._virtual && slug === 'ideas') return 6;
-                if (wall._virtual && slug === 'drafts') return 7;
+                if (wall._virtual && slug === 'ideas') return 5;
+                if (wall._virtual && slug === 'drafts') return 6;
+                if (wall._virtual && slug === 'resume') return 7;
                 return 10;
             };
             const rankDiff = rank(a) - rank(b);
@@ -1618,9 +1618,9 @@ class WallApp {
         v.push({ _virtual: true, slug: 'tech', name: 'tech notes' });
         v.push({ _virtual: true, slug: 'songs', name: 'song quotes' });
         v.push({ _virtual: true, slug: 'runs', name: 'runs' });
-        v.push({ _virtual: true, slug: 'resume', name: 'resume' });
         v.push({ _virtual: true, slug: 'ideas', name: 'project ideas' });
         v.push({ _virtual: true, slug: 'drafts', name: 'drafts' });
+        v.push({ _virtual: true, slug: 'resume', name: 'resume' });
         return v;
     }
 
