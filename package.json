@@ -3,14 +3,18 @@
   "version": "1.0.0",
   "scripts": {
     "dev:local": "node dev-server.js",
+    "migrate:archil": "node --env-file=.env scripts/migrate-supabase-to-archil.js",
+    "migrate:archil:apply": "node --env-file=.env scripts/migrate-supabase-to-archil.js --apply",
     "supabase": "supabase",
     "db:push": "supabase db push",
     "db:new": "supabase migration new"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.39.0",
+    "disk": "^1.10.0",
     "omnara": "^0.2.3",
-    "openai": "^6.1.0"
+    "openai": "^6.1.0",
+    "yaml": "^2.8.1"
   },
   "devDependencies": {
     "supabase": "^2.51.0"

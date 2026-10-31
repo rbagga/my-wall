@@ -1,11 +1,8 @@
 const crypto = require('crypto');
-const { createClient } = require('@supabase/supabase-js');
+const { archilDb: db, getDisk } = require('./lib/archil-db');
 
-// Shared Supabase client (service role for server-side ops)
-const supabase = createClient(
-  process.env.SUPABASE_URL,
-  process.env.SUPABASE_SERVICE_ROLE_KEY
-);
+// The Archil adapter exposes the query operations used by these handlers while
+// storing every record as a file on the configured disk.
 
 // Optional OpenAI moderation for friend notes
 let openai = null;
@@ -79,7 +76,7 @@ function slugify(name = '') {
 
 async function getDefaultWallId() {
   try {
-    const r = await supabase.from('walls').select('id').eq('slug', 'rishu').maybeSingle();
+    const r = await db.from('walls').select('id').eq('slug', 'rishu').maybeSingle();
     if (r && r.data && r.data.id) return r.data.id;
   } catch (_) {}
   return null;
@@ -95,30 +92,15 @@ function getPublicBaseUrl(req) {
 }
 
 const RESUME_FALLBACK_URL = '/assets/rishu-bagga-resume-2026.pdf';
-const RESUME_STORAGE_BUCKET = String(process.env.RESUME_STORAGE_BUCKET || 'resume').trim();
 const RESUME_STORAGE_PATH = String(process.env.RESUME_STORAGE_PATH || 'rishu-bagga-resume-2026.pdf').trim();
+const RESUME_DISK_PATH = `_system/assets/${RESUME_STORAGE_PATH}`;
 
-async function ensureResumeBucket() {
-  if (!RESUME_STORAGE_BUCKET) return;
-  const created = await supabase.storage.createBucket(RESUME_STORAGE_BUCKET, {
-    public: true,
-    fileSizeLimit: 10 * 1024 * 1024,
-    allowedMimeTypes: ['application/pdf'],
-  });
-  if (created.error && !/already exists|duplicate/i.test(String(created.error.message || ''))) {
-    const listed = await supabase.storage.listBuckets();
-    const exists = (listed.data || []).some((bucket) => bucket && bucket.name === RESUME_STORAGE_BUCKET);
-    if (!exists) throw created.error;
-  }
-}
-
-async function getResumeUrl() {
+async function getResumeUrl(req) {
   try {
-    if (!RESUME_STORAGE_BUCKET || !RESUME_STORAGE_PATH) return RESUME_FALLBACK_URL;
-    const downloaded = await supabase.storage.from(RESUME_STORAGE_BUCKET).download(RESUME_STORAGE_PATH);
-    if (downloaded.error) return RESUME_FALLBACK_URL;
-    const pub = supabase.storage.from(RESUME_STORAGE_BUCKET).getPublicUrl(RESUME_STORAGE_PATH);
-    return (pub.data && pub.data.publicUrl) || RESUME_FALLBACK_URL;
+    const disk = await getDisk();
+    const metadata = await disk.headObject(RESUME_DISK_PATH);
+    if (!metadata) return RESUME_FALLBACK_URL;
+    return `${getPublicBaseUrl(req)}/api/resume?file=1&v=${encodeURIComponent(metadata.etag || '')}`;
   } catch (_) {
     return RESUME_FALLBACK_URL;
   }
@@ -126,7 +108,21 @@ async function getResumeUrl() {
 
 async function resumeHandler(req, res) {
   if (req.method === 'GET') {
-    const url = await getResumeUrl();
+    const requestUrl = new URL(req.url, 'http://local');
+    if (requestUrl.searchParams.get('file') === '1') {
+      try {
+        const disk = await getDisk();
+        const bytes = await disk.getObject(RESUME_DISK_PATH);
+        res.setHeader('Content-Type', 'application/pdf');
+        res.setHeader('Content-Disposition', 'inline; filename="rishu-bagga-resume-2026.pdf"');
+        res.setHeader('Cache-Control', 'public, max-age=60');
+        res.statusCode = 200;
+        return res.end(Buffer.from(bytes));
+      } catch (_) {
+        return res.status(404).json({ error: 'Resume not found' });
+      }
+    }
+    const url = await getResumeUrl(req);
     return res.status(200).json({
       url,
       fallbackUrl: RESUME_FALLBACK_URL,
@@ -157,17 +153,10 @@ async function resumeHandler(req, res) {
         return res.status(400).json({ error: 'Resume upload must be a PDF' });
       }
 
-      await ensureResumeBucket();
-      const uploaded = await supabase.storage
-        .from(RESUME_STORAGE_BUCKET)
-        .upload(RESUME_STORAGE_PATH, buffer, {
-          contentType: 'application/pdf',
-          cacheControl: '60',
-          upsert: true,
-        });
-      if (uploaded.error) throw uploaded.error;
+      const disk = await getDisk();
+      await disk.putObject(RESUME_DISK_PATH, buffer, 'application/pdf');
 
-      const url = await getResumeUrl();
+      const url = await getResumeUrl(req);
       return res.status(200).json({
         url,
         fallbackUrl: RESUME_FALLBACK_URL,
@@ -233,7 +222,7 @@ function canBypassStravaState(req) {
 
 async function getLatestStravaConnection() {
   try {
-    const q = await supabase.from('strava_connections').select('*').order('updated_at', { ascending: false }).limit(1).maybeSingle();
+    const q = await db.from('strava_connections').select('*').order('updated_at', { ascending: false }).limit(1).maybeSingle();
     if (q.error) {
       if (String(q.error.code) === '42P01' || /strava_connections/i.test(String(q.error.message || ''))) return null;
       throw q.error;
@@ -277,7 +266,7 @@ async function saveStravaConnection(tokenPayload) {
     scope: Array.isArray(tokenPayload.scope) ? tokenPayload.scope.join(',') : (tokenPayload.scope || null),
     updated_at: new Date().toISOString(),
   };
-  const q = await supabase.from('strava_connections').upsert([row], { onConflict: 'athlete_id' }).select();
+  const q = await db.from('strava_connections').upsert([row], { onConflict: 'athlete_id' }).select();
   if (q.error) throw q.error;
   return (q.data && q.data[0]) || row;
 }
@@ -408,14 +397,14 @@ async function syncStravaRuns() {
     if (items.length < 100) break;
   }
   if (runs.length) {
-    const q = await supabase.from('strava_runs').upsert(runs, { onConflict: 'strava_id' });
+    const q = await db.from('strava_runs').upsert(runs, { onConflict: 'strava_id' });
     if (q.error) throw q.error;
   }
   return { synced: true, count: runs.length, connection };
 }
 
 async function listStravaRuns() {
-  const q = await supabase.from('strava_runs').select('*').order('start_date', { ascending: false });
+  const q = await db.from('strava_runs').select('*').order('start_date', { ascending: false });
   if (q.error) {
     if (String(q.error.code) === '42P01' || /strava_runs/i.test(String(q.error.message || ''))) return [];
     throw q.error;
@@ -430,7 +419,7 @@ async function listStravaRuns() {
 }
 
 async function getLatestStravaRunSyncAt() {
-  const q = await supabase.from('strava_runs').select('synced_at').order('synced_at', { ascending: false }).limit(1).maybeSingle();
+  const q = await db.from('strava_runs').select('synced_at').order('synced_at', { ascending: false }).limit(1).maybeSingle();
   if (q.error) {
     if (String(q.error.code) === '42P01' || /strava_runs/i.test(String(q.error.message || ''))) return null;
     throw q.error;
@@ -451,7 +440,7 @@ async function entriesHandler(req, res, parts) {
       let resolvedWallId = wallId;
       if (!resolvedWallId && wallSlug) {
         try {
-          const r = await supabase.from('walls').select('id').eq('slug', wallSlug).maybeSingle();
+          const r = await db.from('walls').select('id').eq('slug', wallSlug).maybeSingle();
           if (r.data && r.data.id) resolvedWallId = String(r.data.id);
         } catch (_) {}
       }
@@ -459,7 +448,7 @@ async function entriesHandler(req, res, parts) {
       // If a specific wall is requested and it is private, require password
       if (resolvedWallId) {
         try {
-          const wr = await supabase.from('walls').select('is_public').eq('id', resolvedWallId).maybeSingle();
+          const wr = await db.from('walls').select('is_public').eq('id', resolvedWallId).maybeSingle();
           if (wr && wr.data && wr.data.is_public === false) {
             if (pwd !== process.env.WALL_PASSWORD) {
               return res.status(401).json({ error: 'Unauthorized' });
@@ -470,20 +459,20 @@ async function entriesHandler(req, res, parts) {
 
       // If requesting a specific entry by id, return just that row (respect wall password if private)
       if (entryId) {
-        const row = await supabase.from('wall_entries').select('*').eq('id', entryId).maybeSingle();
+        const row = await db.from('wall_entries').select('*').eq('id', entryId).maybeSingle();
         if (row.error) throw row.error;
         if (!row.data) return res.status(404).json({ error: 'Not found' });
         const wid = row.data.wall_id;
         if (wid) {
           try {
-            const wr = await supabase.from('walls').select('is_public').eq('id', wid).maybeSingle();
+            const wr = await db.from('walls').select('is_public').eq('id', wid).maybeSingle();
             if (wr && wr.data && wr.data.is_public === false) {
               // Allow access if password OK OR a valid short-link code for this entry is provided
               const code = url.searchParams.get('code');
               let authorized = (pwd === process.env.WALL_PASSWORD);
               if (!authorized && code) {
                 try {
-                  const c = await supabase.from('short_links').select('entry_id').eq('code', code).maybeSingle();
+                  const c = await db.from('short_links').select('entry_id').eq('code', code).maybeSingle();
                   if (c && c.data && String(c.data.entry_id) === String(entryId)) authorized = true;
                 } catch (_) {}
               }
@@ -495,7 +484,7 @@ async function entriesHandler(req, res, parts) {
       }
 
       // Build query dynamically to include wall filter when possible
-      let q2 = supabase
+      let q2 = db
         .from('wall_entries')
         .select('*')
         .or('visibility.is.null,visibility.eq.public')
@@ -510,17 +499,17 @@ async function entriesHandler(req, res, parts) {
         return res.status(200).json({ data: qres.data });
       }
       // Fallback path for environments without .or or column present
-      const pub = await supabase
+      const pub = await db
         .from('wall_entries')
         .select('*')
         .eq('visibility', 'public');
-      const nul = await supabase
+      const nul = await db
         .from('wall_entries')
         .select('*')
         .is('visibility', null);
       if (pub.error && nul.error) {
         // Final fallback (older schema with no visibility): return all
-        const all = await supabase
+        const all = await db
           .from('wall_entries')
           .select('*');
         if (all.error) throw all.error;
@@ -577,7 +566,7 @@ async function entriesHandler(req, res, parts) {
       let targetWallId = wall_id || null;
       if (!targetWallId && wall) {
         try {
-          const r = await supabase.from('walls').select('id').eq('slug', String(wall)).maybeSingle();
+          const r = await db.from('walls').select('id').eq('slug', String(wall)).maybeSingle();
           if (r.data && r.data.id) targetWallId = r.data.id;
         } catch (_) {}
       }
@@ -587,14 +576,14 @@ async function entriesHandler(req, res, parts) {
       const vis = visibility === 'draft' ? 'draft' : 'public';
       const cleanTitle = (typeof title === 'string' && title.trim().length > 0 && title.trim() !== '(optional)') ? title.trim() : null;
       const row = { text, timestamp: new Date().toISOString(), visibility: vis, title: cleanTitle, wall_id: targetWallId };
-      let ins = await supabase.from('wall_entries').insert([row]).select();
+      let ins = await db.from('wall_entries').insert([row]).select();
       if (ins.error) {
         if (vis !== 'public') {
           // Drafts depend on new schema; surface explicit guidance
-          throw new Error('Drafts require DB migration. Please run supabase db push.');
+          throw new Error('Draft storage is unavailable.');
         }
         // Fallback: insert minimal columns compatible with older schema
-        const fb = await supabase
+        const fb = await db
           .from('wall_entries')
           .insert([{ text, timestamp: new Date().toISOString() }])
           .select();
@@ -616,7 +605,7 @@ async function wallsHandler(req, res) {
       const url = new URL(req.url, 'http://local');
       const pwd = url.searchParams.get('password');
       const selectCols = 'id, name, slug, created_at, is_public';
-      let q = supabase.from('walls').select(selectCols).order('created_at', { ascending: false });
+      let q = db.from('walls').select(selectCols).order('created_at', { ascending: false });
       if (pwd !== process.env.WALL_PASSWORD) {
         try { q = q.eq('is_public', true); } catch (_) {}
       }
@@ -640,13 +629,13 @@ async function wallsHandler(req, res) {
       let s = base;
       // ensure unique slug by retrying with suffix up to a few times
       for (let i = 0; i < 10; i++) {
-        const check = await supabase.from('walls').select('id').eq('slug', s).maybeSingle();
+        const check = await db.from('walls').select('id').eq('slug', s).maybeSingle();
         if (!check.data) break;
         s = `${base}-${i+2}`; // base, base-2, base-3, ...
       }
       const payload = { name: String(name).trim(), slug: s };
       if (typeof is_public === 'boolean') payload.is_public = is_public;
-      const ins = await supabase.from('walls').insert([payload]).select();
+      const ins = await db.from('walls').insert([payload]).select();
       if (ins.error) throw ins.error;
       return res.status(200).json({ data: ins.data && ins.data[0] });
     } catch (error) {
@@ -666,7 +655,7 @@ async function wallsHandler(req, res) {
       }
       if (typeof is_public === 'boolean') update.is_public = is_public;
       if (!Object.keys(update).length) return res.status(400).json({ error: 'No changes provided' });
-      const up = await supabase.from('walls').update(update).eq('id', id).select();
+      const up = await db.from('walls').update(update).eq('id', id).select();
       if (up.error) throw up.error;
       return res.status(200).json({ data: up.data && up.data[0] });
     } catch (error) {
@@ -681,14 +670,14 @@ async function wallsHandler(req, res) {
       if (!id) return res.status(400).json({ error: 'Missing id' });
       if (password !== process.env.WALL_PASSWORD) return res.status(401).json({ error: 'Invalid password' });
       // Prevent deleting default rishu wall by slug
-      const w = await supabase.from('walls').select('id, slug').eq('id', id).maybeSingle();
+      const w = await db.from('walls').select('id, slug').eq('id', id).maybeSingle();
       if (w.error) throw w.error;
       if (!w.data) return res.status(404).json({ error: 'Not found' });
       if ((w.data.slug || '').toLowerCase() === 'rishu') return res.status(400).json({ error: "Cannot delete the default wall" });
       // Delete wall entries first, then wall
-      const delEntries = await supabase.from('wall_entries').delete().eq('wall_id', id);
+      const delEntries = await db.from('wall_entries').delete().eq('wall_id', id);
       if (delEntries.error) throw delEntries.error;
-      const delWall = await supabase.from('walls').delete().eq('id', id);
+      const delWall = await db.from('walls').delete().eq('id', id);
       if (delWall.error) throw delWall.error;
       return res.status(200).json({ ok: true });
     } catch (error) {
@@ -711,17 +700,17 @@ async function seriesHandler(req, res) {
       const allowed = new Set(['rishu','friend','tech','songs','ideas']);
       let q;
       if (wall && allowed.has(wall)) {
-        q = await supabase.from('series').select('*').eq('home_wall', wall)
+        q = await db.from('series').select('*').eq('home_wall', wall)
           .order('is_pinned', { ascending: false })
           .order('pin_order', { ascending: true, nullsFirst: false })
           .order('created_at', { ascending: false });
         if (q.error && String(q.error.code) === '42703') {
           // Column home_wall missing – fallback to no filter
-          q = await supabase.from('series').select('*')
+          q = await db.from('series').select('*')
             .order('created_at', { ascending: false });
         }
       } else {
-        q = await supabase.from('series').select('*')
+        q = await db.from('series').select('*')
           .order('is_pinned', { ascending: false })
           .order('pin_order', { ascending: true, nullsFirst: false })
           .order('created_at', { ascending: false });
@@ -746,7 +735,7 @@ async function seriesHandler(req, res) {
       const password = body.password || url.searchParams.get('password');
       if (!id) return res.status(400).json({ error: 'Missing id' });
       if (password !== process.env.WALL_PASSWORD) return res.status(401).json({ error: 'Invalid password' });
-      const del = await supabase.from('series').delete().eq('id', id);
+      const del = await db.from('series').delete().eq('id', id);
       if (del.error) throw del.error;
       return res.status(200).json({ ok: true });
     } catch (error) {
@@ -762,7 +751,7 @@ async function seriesHandler(req, res) {
         if (!id || typeof pin === 'undefined') return res.status(400).json({ error: 'id and pin are required' });
         if (password !== process.env.WALL_PASSWORD) return res.status(401).json({ error: 'Invalid password' });
         if (pin) {
-          const maxRow = await supabase
+          const maxRow = await db
             .from('series')
             .select('pin_order')
             .eq('is_pinned', true)
@@ -773,10 +762,10 @@ async function seriesHandler(req, res) {
             return res.status(400).json({ error: 'Series pinning requires DB migration. Please add is_pinned and pin_order columns.' });
           }
           const nextOrder = (maxRow && maxRow.data && typeof maxRow.data.pin_order === 'number') ? (maxRow.data.pin_order + 1) : 0;
-          const { error: upErr } = await supabase.from('series').update({ is_pinned: true, pin_order: nextOrder }).eq('id', id);
+          const { error: upErr } = await db.from('series').update({ is_pinned: true, pin_order: nextOrder }).eq('id', id);
           if (upErr) throw upErr;
         } else {
-          const { error: upErr } = await supabase.from('series').update({ is_pinned: false, pin_order: null }).eq('id', id);
+          const { error: upErr } = await db.from('series').update({ is_pinned: false, pin_order: null }).eq('id', id);
           if (upErr) throw upErr;
         }
         return res.status(200).json({ ok: true });
@@ -787,7 +776,7 @@ async function seriesHandler(req, res) {
         if (password !== process.env.WALL_PASSWORD) return res.status(401).json({ error: 'Invalid password' });
         for (let i = 0; i < ids.length; i++) {
           const id = ids[i];
-          const { error } = await supabase.from('series').update({ is_pinned: true, pin_order: i }).eq('id', id);
+          const { error } = await db.from('series').update({ is_pinned: true, pin_order: i }).eq('id', id);
           if (error) {
             if (String(error.code) === '42703') return res.status(400).json({ error: 'Series pin ordering requires DB migration.' });
             throw error;
@@ -801,19 +790,19 @@ async function seriesHandler(req, res) {
       const preferred = (home_wall || wall || 'rishu').toLowerCase();
       const allowed = new Set(['rishu','friend','tech','songs','ideas']);
       const hw = allowed.has(preferred) ? preferred : 'rishu';
-      let ins = await supabase.from('series').insert([{ title: String(title).trim(), home_wall: hw }]).select();
+      let ins = await db.from('series').insert([{ title: String(title).trim(), home_wall: hw }]).select();
       if (ins.error) {
         const msg = String(ins.error.message || '');
         const code = String(ins.error.code || '');
         if (code === '42703' || /home_wall/i.test(msg)) {
           // home_wall column missing; fallback insert without it
-          const fb = await supabase.from('series').insert([{ title: String(title).trim() }]).select();
+          const fb = await db.from('series').insert([{ title: String(title).trim() }]).select();
           if (fb.error) throw fb.error;
           const row = fb.data && fb.data[0] ? { ...fb.data[0], home_wall: hw } : null;
           return res.status(200).json({ data: row });
         }
         if (code === '42P01') {
-          return res.status(400).json({ error: 'Series require DB migration. Please run supabase db push.' });
+          return res.status(500).json({ error: 'Series storage is unavailable.' });
         }
         throw ins.error;
       }
@@ -832,7 +821,7 @@ async function seriesItemsHandler(req, res) {
       const seriesId = url.searchParams.get('series_id');
       if (!seriesId) return res.status(400).json({ error: 'series_id is required' });
       // Fetch items for this series ordered by position then created_at
-      const items = await supabase
+      const items = await db
         .from('series_items')
         .select('source_type, source_id, position, created_at')
         .eq('series_id', seriesId)
@@ -853,7 +842,7 @@ async function seriesItemsHandler(req, res) {
       async function fetchType(t, table, select = '*') {
         const ids = Array.from(new Set(groups[t] || []));
         if (!ids.length) { results[t] = new Map(); return; }
-        const q = await supabase.from(table).select(select).in('id', ids);
+        const q = await db.from(table).select(select).in('id', ids);
         if (q.error) throw q.error;
         results[t] = new Map((q.data || []).map(e => [String(e.id), e]));
       }
@@ -885,7 +874,7 @@ async function seriesItemsHandler(req, res) {
       // Update positions to match new order (0..n-1)
       for (let i = 0; i < ordered_ids.length; i++) {
         const source_id = ordered_ids[i];
-        const { error } = await supabase
+        const { error } = await db
           .from('series_items')
           .update({ position: i })
           .eq('series_id', series_id)
@@ -906,7 +895,7 @@ async function seriesItemsHandler(req, res) {
       if (!allowed.has(source_type)) return res.status(400).json({ error: 'Invalid source_type' });
       if (password !== process.env.WALL_PASSWORD) return res.status(401).json({ error: 'Invalid password' });
       // Next position
-      const max = await supabase
+      const max = await db
         .from('series_items')
         .select('position')
         .eq('series_id', series_id)
@@ -915,13 +904,13 @@ async function seriesItemsHandler(req, res) {
         .maybeSingle();
       let next = 0;
       if (max && max.data && typeof max.data.position === 'number') next = max.data.position + 1;
-      const ins = await supabase
+      const ins = await db
         .from('series_items')
         .insert([{ series_id, source_type, source_id, position: next }])
         .select();
       if (ins.error) {
         if (String(ins.error.code) === '42P01' || /series_items/i.test(String(ins.error.message || ''))) {
-          return res.status(400).json({ error: 'Series items require DB migration. Please run supabase db push.' });
+          return res.status(500).json({ error: 'Series item storage is unavailable.' });
         }
         throw ins.error;
       }
@@ -940,7 +929,7 @@ async function seriesItemsHandler(req, res) {
       const password = body.password || url.searchParams.get('password');
       if (!series_id || !source_type || !source_id) return res.status(400).json({ error: 'series_id, source_type and source_id are required' });
       if (password !== process.env.WALL_PASSWORD) return res.status(401).json({ error: 'Invalid password' });
-      const del = await supabase.from('series_items').delete().eq('series_id', series_id).eq('source_type', source_type).eq('source_id', source_id);
+      const del = await db.from('series_items').delete().eq('series_id', series_id).eq('source_type', source_type).eq('source_id', source_id);
       if (del.error) throw del.error;
       return res.status(200).json({ ok: true });
     } catch (error) {
@@ -965,10 +954,10 @@ async function updateEntryHandler(req, res) {
       update.title = cleanTitle && cleanTitle !== '(optional)' ? cleanTitle : null;
     }
 
-    let { data, error } = await supabase.from('wall_entries').update(update).eq('id', id).select();
+    let { data, error } = await db.from('wall_entries').update(update).eq('id', id).select();
     if (error) {
       // Fallback: update only text for older schemas
-      const fb = await supabase.from('wall_entries').update({ text: update.text }).eq('id', id).select();
+      const fb = await db.from('wall_entries').update({ text: update.text }).eq('id', id).select();
       if (fb.error) throw error;
       data = fb.data;
     }
@@ -986,7 +975,7 @@ async function deleteEntryHandler(req, res) {
     const password = body.password || (req.query && req.query.password);
     if (!id) return res.status(400).json({ error: 'Missing id' });
     if (password !== process.env.WALL_PASSWORD) return res.status(401).json({ error: 'Invalid password' });
-    const { error } = await supabase.from('wall_entries').delete().eq('id', id);
+    const { error } = await db.from('wall_entries').delete().eq('id', id);
     if (error) throw error;
     return res.status(200).json({ ok: true });
   } catch (error) {
@@ -1001,7 +990,7 @@ async function pinEntryHandler(req, res) {
     if (!id || typeof pin === 'undefined') return res.status(400).json({ error: 'id and pin are required' });
     if (password !== process.env.WALL_PASSWORD) return res.status(401).json({ error: 'Invalid password' });
     if (pin) {
-      const { data: maxRow, error: maxErr } = await supabase
+      const { data: maxRow, error: maxErr } = await db
         .from('wall_entries')
         .select('pin_order')
         .eq('is_pinned', true)
@@ -1010,10 +999,10 @@ async function pinEntryHandler(req, res) {
         .maybeSingle();
       if (maxErr) throw maxErr;
       const nextOrder = (maxRow && typeof maxRow.pin_order === 'number') ? (maxRow.pin_order + 1) : 0;
-      const { error: upErr } = await supabase.from('wall_entries').update({ is_pinned: true, pin_order: nextOrder }).eq('id', id);
+      const { error: upErr } = await db.from('wall_entries').update({ is_pinned: true, pin_order: nextOrder }).eq('id', id);
       if (upErr) throw upErr;
     } else {
-      const { error: upErr } = await supabase.from('wall_entries').update({ is_pinned: false, pin_order: null }).eq('id', id);
+      const { error: upErr } = await db.from('wall_entries').update({ is_pinned: false, pin_order: null }).eq('id', id);
       if (upErr) throw upErr;
     }
     return res.status(200).json({ ok: true });
@@ -1030,7 +1019,7 @@ async function reorderPinsHandler(req, res) {
     if (password !== process.env.WALL_PASSWORD) return res.status(401).json({ error: 'Invalid password' });
     for (let i = 0; i < orderedIds.length; i++) {
       const id = orderedIds[i];
-      const { error } = await supabase.from('wall_entries').update({ is_pinned: true, pin_order: i }).eq('id', id);
+      const { error } = await db.from('wall_entries').update({ is_pinned: true, pin_order: i }).eq('id', id);
       if (error) throw error;
     }
     return res.status(200).json({ ok: true });
@@ -1042,7 +1031,7 @@ async function reorderPinsHandler(req, res) {
 async function friendEntriesHandler(req, res) {
   if (req.method === 'GET') {
     try {
-      const { data, error } = await supabase.from('friend_entries').select('*').order('timestamp', { ascending: false });
+      const { data, error } = await db.from('friend_entries').select('*').order('timestamp', { ascending: false });
       if (error) throw error;
       return res.status(200).json({ data });
     } catch (error) {
@@ -1073,7 +1062,7 @@ async function friendEntriesHandler(req, res) {
         }
       }
       const cleanTitle = (typeof title === 'string' && title.trim().length > 0 && title.trim() !== '(optional)') ? title.trim() : null;
-      const ins = await supabase
+      const ins = await db
         .from('friend_entries')
         .insert([{ name, text, title: cleanTitle, timestamp: new Date().toISOString() }])
         .select();
@@ -1081,7 +1070,7 @@ async function friendEntriesHandler(req, res) {
         return res.status(200).json({ data: ins.data[0] });
       }
       // Fallback without title for older schema
-      const fb = await supabase
+      const fb = await db
         .from('friend_entries')
         .insert([{ name, text, timestamp: new Date().toISOString() }])
         .select();
@@ -1102,7 +1091,7 @@ async function deleteFriendEntryHandler(req, res) {
     const password = body.password || (req.query && req.query.password);
     if (!id) return res.status(400).json({ error: 'Missing id' });
     if (password !== process.env.WALL_PASSWORD) return res.status(401).json({ error: 'Invalid password' });
-    const { error } = await supabase.from('friend_entries').delete().eq('id', id);
+    const { error } = await db.from('friend_entries').delete().eq('id', id);
     if (error) throw error;
     return res.status(200).json({ ok: true });
   } catch (error) {
@@ -1130,12 +1119,12 @@ async function draftsHandler(req, res) {
     let targetWallId = wall_id || null;
     if (!targetWallId && wall) {
       try {
-        const r = await supabase.from('walls').select('id').eq('slug', wall).maybeSingle();
+        const r = await db.from('walls').select('id').eq('slug', wall).maybeSingle();
         if (r.data && r.data.id) targetWallId = r.data.id;
       } catch (_) {}
     }
     if (!targetWallId) targetWallId = await getDefaultWallId();
-    let q = supabase.from('wall_entries').select('*').eq('visibility', 'draft').order('timestamp', { ascending: false });
+    let q = db.from('wall_entries').select('*').eq('visibility', 'draft').order('timestamp', { ascending: false });
     if (targetWallId) { try { q = q.eq('wall_id', targetWallId); } catch (_) {} }
     const { data, error } = await q;
     if (error) throw error;
@@ -1299,10 +1288,10 @@ async function stravaRunsHandler(req, res) {
 async function techNotesHandler(req, res) {
   if (req.method === 'GET') {
     try {
-      let q = await supabase.from('tech_notes').select('*').order('timestamp', { ascending: false });
+      let q = await db.from('tech_notes').select('*').order('timestamp', { ascending: false });
       if (q.error) {
         if (String(q.error.code) === '42703' || /column\s+"?timestamp"?/i.test(String(q.error.message || ''))) {
-          const fb = await supabase.from('tech_notes').select('*').order('id', { ascending: false });
+          const fb = await db.from('tech_notes').select('*').order('id', { ascending: false });
           if (fb.error) {
             if (String(fb.error.code) === '42P01' || /tech_notes/i.test(String(fb.error.message || ''))) {
               return res.status(200).json({ data: [] });
@@ -1327,12 +1316,12 @@ async function techNotesHandler(req, res) {
       if (!text) return res.status(400).json({ error: 'Text is required' });
       if (password !== process.env.WALL_PASSWORD) return res.status(401).json({ error: 'Invalid password' });
       const cleanTitle = (typeof title === 'string' && title.trim().length > 0 && title.trim() !== '(optional)') ? title.trim() : null;
-      let ins = await supabase.from('tech_notes').insert([{ text, title: cleanTitle }]).select();
+      let ins = await db.from('tech_notes').insert([{ text, title: cleanTitle }]).select();
       if (ins.error) {
         if (String(ins.error.code) === '42P01' || /tech_notes/i.test(String(ins.error.message || ''))) {
-          return res.status(400).json({ error: 'Tech notes require DB migration. Please run supabase db push.' });
+          return res.status(500).json({ error: 'Tech note storage is unavailable.' });
         }
-        const fb = await supabase.from('tech_notes').insert([{ text }]).select();
+        const fb = await db.from('tech_notes').insert([{ text }]).select();
         if (fb.error) throw ins.error || fb.error;
         ins = fb;
       }
@@ -1351,10 +1340,10 @@ async function projectIdeasHandler(req, res) {
     try {
       const { password } = req.body || {};
       if (password !== process.env.WALL_PASSWORD) return res.status(401).json({ error: 'Invalid password' });
-      let q = await supabase.from('project_ideas').select('*').order('timestamp', { ascending: false });
+      let q = await db.from('project_ideas').select('*').order('timestamp', { ascending: false });
       if (q.error) {
         if (String(q.error.code) === '42703' || /column\s+"?timestamp"?/i.test(String(q.error.message || ''))) {
-          const fb = await supabase.from('project_ideas').select('*').order('id', { ascending: false });
+          const fb = await db.from('project_ideas').select('*').order('id', { ascending: false });
           if (fb.error) {
             if (String(fb.error.code) === '42P01' || /project_ideas/i.test(String(fb.error.message || ''))) {
               return res.status(200).json({ data: [] });
@@ -1380,12 +1369,12 @@ async function projectIdeasHandler(req, res) {
       if (!text) return res.status(400).json({ error: 'Text is required' });
       if (password !== process.env.WALL_PASSWORD) return res.status(401).json({ error: 'Invalid password' });
       const cleanTitle = (typeof title === 'string' && title.trim().length > 0 && title.trim() !== '(optional)') ? title.trim() : null;
-      let ins = await supabase.from('project_ideas').insert([{ text, title: cleanTitle }]).select();
+      let ins = await db.from('project_ideas').insert([{ text, title: cleanTitle }]).select();
       if (ins.error) {
         if (String(ins.error.code) === '42P01' || /project_ideas/i.test(String(ins.error.message || ''))) {
-          return res.status(400).json({ error: 'Ideas require DB migration. Please run supabase db push.' });
+          return res.status(500).json({ error: 'Idea storage is unavailable.' });
         }
-        const fb = await supabase.from('project_ideas').insert([{ text }]).select();
+        const fb = await db.from('project_ideas').insert([{ text }]).select();
         if (fb.error) throw ins.error || fb.error;
         ins = fb;
       }
@@ -1405,7 +1394,7 @@ async function deleteProjectIdeaHandler(req, res) {
     const password = body.password || (req.query && req.query.password);
     if (!id) return res.status(400).json({ error: 'Missing id' });
     if (password !== process.env.WALL_PASSWORD) return res.status(401).json({ error: 'Invalid password' });
-    const { error } = await supabase.from('project_ideas').delete().eq('id', id);
+    const { error } = await db.from('project_ideas').delete().eq('id', id);
     if (error) throw error;
     return res.status(200).json({ ok: true });
   } catch (error) {
@@ -1427,7 +1416,7 @@ async function updateProjectIdeaHandler(req, res) {
       update.title = cleanTitle && cleanTitle !== '(optional)' ? cleanTitle : null;
     }
 
-    let { data, error } = await supabase.from('project_ideas').update(update).eq('id', id).select();
+    let { data, error } = await db.from('project_ideas').update(update).eq('id', id).select();
     if (error) throw error;
     return res.status(200).json({ data: (data && data[0]) || null });
   } catch (error) {
@@ -1442,7 +1431,7 @@ async function deleteTechNoteHandler(req, res) {
     const password = body.password || (req.query && req.query.password);
     if (!id) return res.status(400).json({ error: 'Missing id' });
     if (password !== process.env.WALL_PASSWORD) return res.status(401).json({ error: 'Invalid password' });
-    const { error } = await supabase.from('tech_notes').delete().eq('id', id);
+    const { error } = await db.from('tech_notes').delete().eq('id', id);
     if (error) throw error;
     return res.status(200).json({ ok: true });
   } catch (error) {
@@ -1464,7 +1453,7 @@ async function updateTechNoteHandler(req, res) {
       update.title = cleanTitle && cleanTitle !== '(optional)' ? cleanTitle : null;
     }
 
-    let { data, error } = await supabase.from('tech_notes').update(update).eq('id', id).select();
+    let { data, error } = await db.from('tech_notes').update(update).eq('id', id).select();
     if (error) throw error;
     return res.status(200).json({ data: (data && data[0]) || null });
   } catch (error) {
@@ -1476,10 +1465,10 @@ async function updateTechNoteHandler(req, res) {
 async function songQuotesHandler(req, res) {
   if (req.method === 'GET') {
     try {
-      let q = await supabase.from('song_quotes').select('*').order('timestamp', { ascending: false });
+      let q = await db.from('song_quotes').select('*').order('timestamp', { ascending: false });
       if (q.error) {
         if (String(q.error.code) === '42703' || /column\s+"?timestamp"?/i.test(String(q.error.message || ''))) {
-          const fb = await supabase.from('song_quotes').select('*').order('id', { ascending: false });
+          const fb = await db.from('song_quotes').select('*').order('id', { ascending: false });
           if (fb.error) {
             if (String(fb.error.code) === '42P01' || /song_quotes/i.test(String(fb.error.message || ''))) {
               return res.status(200).json({ data: [] });
@@ -1505,13 +1494,13 @@ async function songQuotesHandler(req, res) {
       if (password !== process.env.WALL_PASSWORD) return res.status(401).json({ error: 'Invalid password' });
       const cleanTitle = (typeof title === 'string' && title.trim().length > 0 && title.trim() !== '(optional)') ? title.trim() : null;
       const row = { text, title: cleanTitle, spotify_url: (typeof spotify_url === 'string' && spotify_url.trim()) ? spotify_url.trim() : null, timestamp: new Date().toISOString() };
-      let ins = await supabase.from('song_quotes').insert([row]).select();
+      let ins = await db.from('song_quotes').insert([row]).select();
       if (ins.error) {
         if (String(ins.error.code) === '42P01' || /song_quotes/i.test(String(ins.error.message || ''))) {
-          return res.status(400).json({ error: 'Song quotes require DB migration. Please run supabase db push.' });
+          return res.status(500).json({ error: 'Song quote storage is unavailable.' });
         }
         // Fallback without extra columns
-        const fb = await supabase.from('song_quotes').insert([{ text }]).select();
+        const fb = await db.from('song_quotes').insert([{ text }]).select();
         if (fb.error) throw ins.error || fb.error;
         ins = fb;
       }
@@ -1531,7 +1520,7 @@ async function deleteSongQuoteHandler(req, res) {
     const password = body.password || (req.query && req.query.password);
     if (!id) return res.status(400).json({ error: 'Missing id' });
     if (password !== process.env.WALL_PASSWORD) return res.status(401).json({ error: 'Invalid password' });
-    const { error } = await supabase.from('song_quotes').delete().eq('id', id);
+    const { error } = await db.from('song_quotes').delete().eq('id', id);
     if (error) throw error;
     return res.status(200).json({ ok: true });
   } catch (error) {
@@ -1557,7 +1546,7 @@ async function updateSongQuoteHandler(req, res) {
       update.spotify_url = clean ? clean : null;
     }
 
-    let { data, error } = await supabase.from('song_quotes').update(update).eq('id', id).select();
+    let { data, error } = await db.from('song_quotes').update(update).eq('id', id).select();
     if (error) throw error;
     return res.status(200).json({ data: (data && data[0]) || null });
   } catch (error) {
@@ -1625,10 +1614,10 @@ async function shortenHandler(req, res) {
       } else {
         try {
           if (String(type).toLowerCase() === 'friend') {
-            const fr = await supabase.from('friend_entries').select('id').eq('id', entryId).maybeSingle();
+            const fr = await db.from('friend_entries').select('id').eq('id', entryId).maybeSingle();
             if (fr && fr.data && !fr.error) authorized = true; else if (fr && fr.error) throw fr.error;
           } else {
-            const visQ = await supabase.from('wall_entries').select('visibility').eq('id', entryId).maybeSingle();
+            const visQ = await db.from('wall_entries').select('visibility').eq('id', entryId).maybeSingle();
             if (visQ && !visQ.error) {
               const visibility = visQ.data && visQ.data.visibility;
               if (!visibility || visibility === 'public') authorized = true; else return res.status(403).json({ error: 'Entry is not publicly shareable' });
@@ -1644,12 +1633,12 @@ async function shortenHandler(req, res) {
 
       const isFriend = String(type).toLowerCase() === 'friend';
       const existing = isFriend
-        ? await supabase.from('short_links').select('*').eq('friend_entry_id', entryId).maybeSingle()
-        : await supabase.from('short_links').select('*').eq('entry_id', entryId).maybeSingle();
+        ? await db.from('short_links').select('*').eq('friend_entry_id', entryId).maybeSingle()
+        : await db.from('short_links').select('*').eq('entry_id', entryId).maybeSingle();
       if (existing.error) {
         const msg = String(existing.error.message || '');
         if (/relation .*short_links.* does not exist/i.test(msg)) {
-          throw new Error('Short links require DB migration. Please run supabase db push.');
+          throw new Error('Short-link storage is unavailable.');
         }
         throw existing.error;
       }
@@ -1666,7 +1655,7 @@ async function shortenHandler(req, res) {
       let code = randomCode(6);
       for (let i = 0; i < 5; i++) {
         const payload = isFriend ? { code, friend_entry_id: entryId } : { code, entry_id: entryId };
-        const ins = await supabase.from('short_links').insert([payload]).select();
+        const ins = await db.from('short_links').insert([payload]).select();
         if (!ins.error) {
           const pathOnly = `/s/${encodeURIComponent(code)}`;
           const absolute = origin ? `${origin}${pathOnly}` : null;
@@ -1680,7 +1669,7 @@ async function shortenHandler(req, res) {
           continue;
         }
         if (ins.error && /relation .*short_links.* does not exist/i.test(String(ins.error.message))) {
-          throw new Error('Short links require DB migration. Please run supabase db push.');
+          throw new Error('Short-link storage is unavailable.');
         }
         throw ins.error;
       }
@@ -1694,7 +1683,7 @@ async function shortenHandler(req, res) {
     try {
       const code = (req.query && (req.query.c || req.query.code)) || null;
       if (!code) return res.status(400).json({ error: 'Missing code' });
-      const { data, error } = await supabase.from('short_links').select('entry_id').eq('code', code).maybeSingle();
+      const { data, error } = await db.from('short_links').select('entry_id').eq('code', code).maybeSingle();
       if (error) throw error;
       if (!data) return res.status(404).json({ error: 'Not found' });
       return res.status(200).json({ entryId: data.entry_id });
@@ -1713,7 +1702,7 @@ async function sResolveHandler(req, res) {
     return res.end('Missing code');
   }
   try {
-    const found = await supabase.from('short_links').select('entry_id, friend_entry_id').eq('code', code).maybeSingle();
+    const found = await db.from('short_links').select('entry_id, friend_entry_id').eq('code', code).maybeSingle();
     if (found.error) throw found.error;
     if (!found.data) {
       res.statusCode = 404;
@@ -1727,10 +1716,10 @@ async function sResolveHandler(req, res) {
     let isFriend = false;
     if (friendId) {
       isFriend = true;
-      const q = await supabase.from('friend_entries').select('id, text, timestamp, name').eq('id', friendId).maybeSingle();
+      const q = await db.from('friend_entries').select('id, text, timestamp, name').eq('id', friendId).maybeSingle();
       entry = q.data; e2 = q.error || null;
     } else {
-      const q = await supabase
+      const q = await db
         .from('wall_entries')
         .select('id, text, timestamp, visibility')
         .eq('id', entryId)
