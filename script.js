@@ -4159,12 +4159,17 @@ class WallApp {
 
     showEntryForm() {
         const form = document.createElement('form');
-        form.className = 'entry-form';
+        form.className = 'entry-form entry-composer';
         form.innerHTML = `
             <h3>New Entry</h3>
             <input type="text" id="entryTitle" placeholder="Title (optional)">
-            <textarea id="entryText" placeholder="Write your entry..." required></textarea>
-            <div style="display:flex; gap:8px; align-items:center;">
+            <div class="entry-format-toolbar" role="toolbar" aria-label="Text formatting">
+                <button type="button" class="format-button" data-format="bold" aria-label="Bold" title="Bold (Cmd+B)"><strong>B</strong></button>
+                <button type="button" class="format-button" data-format="italic" aria-label="Italic" title="Italic (Cmd+I)"><em>I</em></button>
+            </div>
+            <div id="entryEditor" class="entry-rich-editor" contenteditable="true" role="textbox" aria-multiline="true" data-placeholder="Write your entry..."></div>
+            <textarea id="entryText" class="entry-text-source" aria-hidden="true" tabindex="-1"></textarea>
+            <div class="entry-composer-actions">
                 <button type="submit" id="publishBtn" class="btn-liquid clear">Publish</button>
                 ${this.currentWall === 'drafts' ? `<select id="publishTarget" class="select-liquid" style="margin-left:8px;"><option value="rishu">rishu's wall</option><option value="tech">tech notes</option></select>` : ''}
                 <button type="button" id="saveDraftBtn" class="btn-liquid clear">Save Draft</button>
@@ -4178,6 +4183,8 @@ class WallApp {
         // Track modal state for backdrop autosave logic
         this._modalContext = 'new-entry';
         this._activeForm = form;
+        this.dom.modal.classList.add('entry-composer-modal');
+        this.setupEntryFormatting(form);
 
         // native placeholder handles optional UX for title
 
@@ -4242,6 +4249,54 @@ class WallApp {
         setTimeout(() => {
             document.getElementById('entryTitle')?.focus();
         }, 100);
+    }
+
+    setupEntryFormatting(form) {
+        const textarea = form.querySelector('#entryText');
+        const editor = form.querySelector('#entryEditor');
+        if (!textarea || !editor) return;
+
+        const serialize = (node) => {
+            if (node.nodeType === Node.TEXT_NODE) return node.nodeValue || '';
+            if (node.nodeType !== Node.ELEMENT_NODE) return '';
+            const tag = node.tagName.toLowerCase();
+            const content = Array.from(node.childNodes).map(serialize).join('');
+            if (tag === 'br') return '\n';
+            if (tag === 'strong' || tag === 'b') return `**${content}**`;
+            if (tag === 'em' || tag === 'i') return `*${content}*`;
+            if (tag === 'div' || tag === 'p') return `${content}\n`;
+            return content;
+        };
+
+        const syncSource = () => {
+            textarea.value = Array.from(editor.childNodes).map(serialize).join('').replace(/\n$/, '');
+        };
+
+        const applyFormat = (format) => {
+            editor.focus();
+            document.execCommand(format, false);
+            syncSource();
+        };
+
+        form.querySelectorAll('[data-format]').forEach((button) => {
+            button.addEventListener('mousedown', (event) => event.preventDefault());
+            button.addEventListener('click', () => applyFormat(button.dataset.format));
+        });
+
+        editor.addEventListener('input', syncSource);
+        editor.addEventListener('paste', (event) => {
+            event.preventDefault();
+            document.execCommand('insertText', false, event.clipboardData.getData('text/plain'));
+        });
+        editor.addEventListener('keydown', (event) => {
+            if (!(event.metaKey || event.ctrlKey) || event.altKey) return;
+            const key = event.key.toLowerCase();
+            if (key !== 'b' && key !== 'i') return;
+            event.preventDefault();
+            applyFormat(key === 'b' ? 'bold' : 'italic');
+        });
+
+        textarea.focus = () => editor.focus();
     }
 
     async handleModalBackdropClick() {
@@ -5769,6 +5824,7 @@ class WallApp {
     closeModal() {
         this.destroyActiveRunMap();
         this.dom.modal.classList.remove('show');
+        this.dom.modal.classList.remove('entry-composer-modal');
 
         // Clear modal content after animation
         setTimeout(() => {
@@ -5799,7 +5855,7 @@ class WallApp {
             const start = match.index;
             const end = start + match[0].length;
             // Non-link segment, escaped
-            out += this.escapeHtml(str.slice(last, start));
+            out += this.formatInlineText(str.slice(last, start));
             let href = match[0];
             if (/^www\./i.test(href)) href = 'https://' + href;
             if (/^https?:\/\//i.test(href)) {
@@ -5812,8 +5868,15 @@ class WallApp {
             }
             last = end;
         }
-        out += this.escapeHtml(str.slice(last));
+        out += this.formatInlineText(str.slice(last));
         return out;
+    }
+
+    formatInlineText(text) {
+        return this.escapeHtml(text)
+            .replace(/\*\*\*([^*\n]+)\*\*\*/g, '<strong><em>$1</em></strong>')
+            .replace(/\*\*([^*\n]+)\*\*/g, '<strong>$1</strong>')
+            .replace(/(^|[^*])\*([^*\n]+)\*(?!\*)/g, '$1<em>$2</em>');
     }
 
     async fetchSpotifyArt(spotifyUrl) {
