@@ -5,6 +5,7 @@
     "dev:local": "node dev-server.js",
     "migrate:archil": "node --env-file=.env scripts/migrate-supabase-to-archil.js",
     "migrate:archil:apply": "node --env-file=.env scripts/migrate-supabase-to-archil.js --apply",
+    "index:archil": "node --env-file=.env scripts/rebuild-archil-index.js",
     "supabase": "supabase",
     "db:push": "supabase db push",
     "db:new": "supabase migration new"

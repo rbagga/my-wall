@@ -314,13 +314,18 @@ class WallApp {
         // Prepare transparent drag image (kept for compatibility but not used now)
         this._dragImg = this.createTransparentDragImage();
 
-        // Load walls list (non-blocking)
+        // Load walls list (non-blocking). Routing already starts the entry load
+        // when a saved wall exists, so avoid downloading the same files twice.
+        const needsInitialWallSelection = !this.selectedWall;
         this.fetchWalls().then(() => {
             if (!this.selectedWall) this.selectInitialWall();
             this.updateWallTitle();
             this.renderWallButtons();
             // Do not auto-load entries while showing home
-            if (!this.isHome && this.currentWall === 'rishu') { this.entriesCache.rishu = null; this.loadEntries(); }
+            if (!this.isHome && this.currentWall === 'rishu' && needsInitialWallSelection) {
+                this.entriesCache.rishu = null;
+                this.loadEntries();
+            }
         }).catch(() => {
             this.updateWallTitle();
             this.renderWallButtons();
@@ -547,6 +552,8 @@ class WallApp {
                     url.searchParams.set('password', this.tempPassword);
                 }
             }
+            const stagedLoad = wallKey === 'rishu';
+            if (stagedLoad) url.searchParams.set('summary', '1');
             const response = await fetch(url.toString());
             const result = await response.json();
 
@@ -556,6 +563,22 @@ class WallApp {
             this.entriesCache[wallKey] = fresh;
             this.entries = fresh;
             this.renderEntries();
+            if (stagedLoad && this.currentWall === wallKey) {
+                const fullUrl = new URL(url.toString());
+                fullUrl.searchParams.delete('summary');
+                fetch(fullUrl.toString())
+                    .then(async (fullResponse) => {
+                        const fullResult = await fullResponse.json().catch(() => ({}));
+                        if (!fullResponse.ok) throw new Error(fullResult.error || 'Failed to load full entries');
+                        const complete = Array.isArray(fullResult.data) ? fullResult.data : [];
+                        this.entriesCache[wallKey] = complete;
+                        if (this.currentWall === wallKey) {
+                            this.entries = complete;
+                            this.renderEntries();
+                        }
+                    })
+                    .catch((error) => console.error('Error loading full entries:', error));
+            }
             // Prefetch series items to enable duplicate filtering, then re-render
             if (this.currentWall === wallKey) {
                 this.prefetchSeriesItemsForCurrentWall().then(() => {

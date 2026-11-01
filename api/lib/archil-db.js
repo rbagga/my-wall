@@ -10,6 +10,8 @@ const ENTRY_WALLS = Object.freeze({
 });
 const ENTRY_TABLES = new Set(['wall_entries', ...Object.keys(ENTRY_WALLS)]);
 const INTERNAL_FIELDS = new Set(['_path', '_series_id', '_source_type', '_wall_slug']);
+const ENTRY_SUMMARY_INDEX = '_system/index/entry-summaries.json';
+const ENTRY_EXCERPT_LENGTH = 280;
 
 let diskPromise;
 
@@ -116,6 +118,46 @@ async function listEntries() {
   return [...byIdentity.values()];
 }
 
+function summarizeEntry(row) {
+  const text = String(row.text || '');
+  return {
+    ...row,
+    text: text.length > ENTRY_EXCERPT_LENGTH ? `${text.slice(0, ENTRY_EXCERPT_LENGTH).trimEnd()}…` : text,
+    _summary: true,
+  };
+}
+
+async function readEntrySummaryIndex() {
+  try {
+    const rows = await readJson(ENTRY_SUMMARY_INDEX);
+    return Array.isArray(rows) ? rows : null;
+  } catch (_) {
+    return null;
+  }
+}
+
+async function rebuildEntrySummaryIndex() {
+  const rows = (await listEntries()).map(summarizeEntry);
+  const disk = await getDisk();
+  await disk.putObject(ENTRY_SUMMARY_INDEX, `${JSON.stringify(rows)}\n`, 'application/json');
+  return rows;
+}
+
+async function listEntrySummaries() {
+  return (await readEntrySummaryIndex()) || rebuildEntrySummaryIndex();
+}
+
+async function updateEntrySummaryIndex(row, deleted = false) {
+  const rows = await readEntrySummaryIndex();
+  if (!rows) return;
+  const identity = (candidate) => `${candidate._table}:${candidate.id}`;
+  const key = identity(row);
+  const next = rows.filter((candidate) => identity(candidate) !== key);
+  if (!deleted) next.push(summarizeEntry(row));
+  const disk = await getDisk();
+  await disk.putObject(ENTRY_SUMMARY_INDEX, `${JSON.stringify(next)}\n`, 'application/json');
+}
+
 function decodeSegment(value) {
   return decodeURIComponent(String(value).replace(/~/g, '%'));
 }
@@ -166,7 +208,9 @@ async function writeEntry(row, table, options = {}) {
   const target = await pathForEntry(normalized, table, options.seriesId);
   await disk.putObject(target, markdownFor(normalized), 'text/markdown; charset=utf-8');
   if (normalized._path && normalized._path !== target) await disk.deleteObject(normalized._path);
-  return { ...normalized, _path: target, _series_id: options.seriesId || null };
+  const written = { ...normalized, _path: target, _series_id: options.seriesId || null };
+  await updateEntrySummaryIndex(written);
+  return written;
 }
 
 async function removeSeries(series) {
@@ -180,8 +224,11 @@ async function removeSeries(series) {
   if (keys.length) await disk.deleteObjects(keys);
 }
 
-async function readTable(table) {
-  if (ENTRY_TABLES.has(table)) return (await listEntries()).filter((row) => row._table === table);
+async function readTable(table, options = {}) {
+  if (ENTRY_TABLES.has(table)) {
+    const rows = options.summary ? await listEntrySummaries() : await listEntries();
+    return rows.filter((row) => row._table === table);
+  }
   if (table === 'walls') return listWalls();
   if (table === 'series') return readManyJson('', '_series.json');
   if (table === 'series_items') {
@@ -285,6 +332,7 @@ async function deleteRow(table, row) {
   if (!row._path) return;
   const disk = await getDisk();
   await disk.deleteObject(row._path);
+  if (ENTRY_TABLES.has(table)) await updateEntrySummaryIndex(row, true);
 }
 
 function project(row, columns) {
@@ -304,6 +352,7 @@ class Query {
     this.operation = 'select';
     this.payload = null;
     this.conflict = null;
+    this.summaryOnly = false;
   }
 
   select(columns = '*') { this.columns = columns; return this; }
@@ -324,6 +373,7 @@ class Query {
   order(field, options = {}) { this.orders.push({ field, ...options }); return this; }
   limit(value) { this.max = Number(value); return this; }
   maybeSingle() { this.single = true; return this; }
+  summaries() { this.summaryOnly = true; return this; }
   insert(rows) { this.operation = 'insert'; this.payload = Array.isArray(rows) ? rows : [rows]; return this; }
   update(values) { this.operation = 'update'; this.payload = values; return this; }
   delete() { this.operation = 'delete'; return this; }
@@ -338,7 +388,7 @@ class Query {
         return { data: written.map((row) => project(row, this.columns)), error: null };
       }
 
-      let rows = await readTable(this.table);
+      let rows = await readTable(this.table, { summary: this.summaryOnly && this.operation === 'select' });
       const matching = rows.filter((row) => this.filters.every((filter) => filter(row)));
 
       if (this.operation === 'update') {
@@ -399,4 +449,5 @@ module.exports = {
   listEntries,
   readTable,
   writeRow,
+  rebuildEntrySummaryIndex,
 };

@@ -436,6 +436,7 @@ async function entriesHandler(req, res, parts) {
       const wallId = url.searchParams.get('wall_id');
       const wallSlug = url.searchParams.get('wall');
       const pwd = url.searchParams.get('password');
+      const summaryOnly = url.searchParams.get('summary') === '1';
 
       let resolvedWallId = wallId;
       if (!resolvedWallId && wallSlug) {
@@ -488,9 +489,11 @@ async function entriesHandler(req, res, parts) {
         .from('wall_entries')
         .select('*')
         .or('visibility.is.null,visibility.eq.public')
+        .is('_series_id', null)
         .order('is_pinned', { ascending: false })
         .order('pin_order', { ascending: true, nullsFirst: false })
         .order('timestamp', { ascending: false });
+      if (summaryOnly) q2 = q2.summaries();
       if (resolvedWallId) {
         try { q2 = q2.eq('wall_id', resolvedWallId); } catch (_) {}
       }
@@ -530,6 +533,7 @@ async function entriesHandler(req, res, parts) {
       }
       // Merge pub + null and sort client-side to emulate server ordering
       let merged = [...(pub.data || []), ...(nul.data || [])];
+      merged = merged.filter(r => !r._series_id);
       if (resolvedWallId) {
         merged = merged.filter(r => String(r.wall_id || '') === String(resolvedWallId));
       }
