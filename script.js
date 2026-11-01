@@ -321,6 +321,15 @@ class WallApp {
             if (!this.selectedWall) this.selectInitialWall();
             this.updateWallTitle();
             this.renderWallButtons();
+            if (this.isHome) {
+                this.renderHomeList();
+                // The folder list is already visible; warm the primary wall in
+                // the background so opening it feels immediate.
+                if (this.currentWall === 'rishu') {
+                    this.loadEntries();
+                    this.loadSeries().catch(() => {});
+                }
+            }
             // Do not auto-load entries while showing home
             if (!this.isHome && this.currentWall === 'rishu' && needsInitialWallSelection) {
                 this.entriesCache.rishu = null;
@@ -1413,12 +1422,10 @@ class WallApp {
         }
         // Hide entire header on home
         if (this.dom.header) this.dom.header.style.display = 'none';
-        if (!this.walls || !this.walls.length) {
-            this.showHomeListLoading();
-            this.fetchWalls().then(() => this.renderHomeList()).catch(() => this.renderHomeList());
-        } else {
-            this.renderHomeList();
-        }
+        // Virtual top-level folders are known locally, so render them without
+        // waiting for the disk-backed walls request. The list is refreshed when
+        // that request completes.
+        this.renderHomeList();
     }
 
     hideHome() {
