@@ -3195,6 +3195,7 @@ class WallApp {
         const type = en._type || this.currentWall || 'rishu';
         const row = document.createElement('div');
         row.className = 'entry series-item';
+        if (type === 'songs') row.classList.add('song-entry');
         row.dataset.id = en.id;
 
         // timestamp
@@ -3212,11 +3213,13 @@ class WallApp {
         }
 
         // songs thumbnail
-        if (type === 'songs' && en.spotify_url) {
+        if (type === 'songs') {
             const thumb = document.createElement('img');
             thumb.alt = 'Album art';
             thumb.className = 'spotify-thumb';
-            this.fetchSpotifyArt(en.spotify_url).then((url) => { if (url) thumb.src = url; });
+            if (en.spotify_url) {
+                this.fetchSpotifyArt(en.spotify_url).then((url) => { if (url) thumb.src = url; });
+            }
             row.appendChild(thumb);
         }
 
@@ -3334,6 +3337,7 @@ class WallApp {
 
         const entryDiv = document.createElement('div');
         entryDiv.className = 'entry';
+        if (this.currentWall === 'songs') entryDiv.classList.add('song-entry');
         entryDiv.dataset.id = entry.id;
         if (entry.is_pinned) entryDiv.classList.add('pinned');
 
@@ -3387,11 +3391,13 @@ class WallApp {
         }
 
         // Spotify thumbnail for songs wall (after timestamp)
-        if (this.currentWall === 'songs' && entry.spotify_url) {
+        if (this.currentWall === 'songs') {
             const thumb = document.createElement('img');
             thumb.alt = 'Album art';
             thumb.className = 'spotify-thumb';
-            this.fetchSpotifyArt(entry.spotify_url).then((url) => { if (url) thumb.src = url; });
+            if (entry.spotify_url) {
+                this.fetchSpotifyArt(entry.spotify_url).then((url) => { if (url) thumb.src = url; });
+            }
             entryDiv.appendChild(thumb);
         }
 

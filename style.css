@@ -948,10 +948,22 @@ body.dark-mode .modal-content {
 .spotify-thumb {
     width: 36px;
     height: 36px;
+    flex: 0 0 36px;
+    display: block;
     object-fit: cover;
     border-radius: 6px;
-    margin-left: 8px;
-    margin-right: 8px;
+    margin: 0;
+    background: var(--hover-soft);
+}
+
+.entry.song-entry {
+    height: 48px;
+    box-sizing: border-box;
+}
+
+.entry.song-entry .entry-timestamp {
+    width: 132px;
+    margin-right: 0;
 }
 
 /* Video thumbnails (match spotify thumb sizing) */
